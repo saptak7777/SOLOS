@@ -1,0 +1,117 @@
+// ==========================================
+// shark/sys/cpu.sinc
+// SHARK Ring 0 CPU Control: GDT, TSS, IDT & IST Handlers
+// ==========================================
+
+fn cpu_init!(ram_tape, fb_base) [
+    bss_base = ram_tape - 49216;
+
+    // 1. Memory Map: Descriptors & Emergency Stacks
+    gdt_buf  = bss_base + 4096;
+    gdtr_buf = bss_base + 4144;
+    idtr_buf = bss_base + 4160;
+    tss_buf  = bss_base + 4176;
+    idt_buf  = bss_base + 4352;
+
+    ist1_top = bss_base + 12544;
+    ist2_top = bss_base + 16640;
+    ist3_top = bss_base + 20736;
+    ist4_top = bss_base + 24832;
+    rsp0     = bss_base + 65536;
+
+    // 2. TSS Setup (104 bytes, 13 QWORDs)
+    tss_buf@[0]  = (rsp0 & 4294967295) << 32;
+    tss_buf@[1]  = (rsp0 >> 32) & 4294967295;
+    tss_buf@[2]  = 0;
+    tss_buf@[3]  = 0;
+    tss_buf@[4]  = (ist1_top & 4294967295) << 32;
+    tss_buf@[5]  = ((ist1_top >> 32) & 4294967295) | ((ist2_top & 4294967295) << 32);
+    tss_buf@[6]  = ((ist2_top >> 32) & 4294967295) | ((ist3_top & 4294967295) << 32);
+    tss_buf@[7]  = ((ist3_top >> 32) & 4294967295) | ((ist4_top & 4294967295) << 32);
+    tss_buf@[8]  = (ist4_top >> 32) & 4294967295;
+    tss_buf@[9]  = 0;
+    tss_buf@[10] = 0;
+    tss_buf@[11] = 0;
+    tss_buf@[12] = TSS_IOMAP_BASE << 48;
+
+    // 3. GDT Setup (5 entries * 8 bytes = 40 bytes)
+    // 0x00: Null, 0x08: Code, 0x10: Data, 0x18: 64-bit TSS (16 bytes)
+    gdt_buf@[0] = 0;
+    gdt_buf@[1] = GDT_CODE_DESC;
+    gdt_buf@[2] = GDT_DATA_DESC;
+
+    tss_lo  = tss_buf & 16777215;
+    tss_mid = (tss_buf >> 24) & 255;
+    tss_hi  = (tss_buf >> 32) & 4294967295;
+
+    gdt_buf@[3] = TSS_LIMIT | (tss_lo << 16) | (TSS_TYPE_ATTR << 40) | (tss_mid << 56);
+    gdt_buf@[4] = tss_hi;
+
+    // GDTR at bss_base + 4144
+    gdtr_buf@[0] = GDT_LIMIT | ((gdt_buf & 281474976710655) << 16);
+    gdtr_buf@[1] = (gdt_buf >> 48) & 65535;
+
+    // Reload GDTR and reload CS=0x08, DS=SS=ES=FS=GS=0x10
+    cpu_reload_gdt!(gdtr_buf);
+
+    // 4. IDT Setup (256 entries * 16 bytes = 4096 bytes)
+    loop (z:512 = 0 .. 512) [
+        idt_buf@[z] = 0;
+    ]
+
+    // Get pointer to 32 ISR stubs and register fb_base for fault handler
+    stubs_base = cpu_get_isr_stubs!(fb_base);
+
+    // Populate vectors 0..31 with IST 1..4 mappings
+    loop (i:32 = 0 .. 32) [
+        isr = stubs_base + (i * 16);
+        isr_lo = isr & 65535;
+        isr_mid = (isr >> 16) & 65535;
+        isr_hi = (isr >> 32) & 4294967295;
+
+        ist_val = 0;
+        if (i == 8) [
+            ist_val = 1;
+        ]
+        if (i == 2) [
+            ist_val = 2;
+        ]
+        if (i == 18) [
+            ist_val = 3;
+        ]
+        if ((i == 12) | (i == 13) | (i == 14)) [
+            ist_val = 4;
+        ]
+
+        w0 = isr_lo | (IDT_CODE_SEL << 16) | (ist_val << 32) | (IDT_GATE_ATTR << 40) | (isr_mid << 48);
+        idx0 = i << 1;
+        idt_buf@[idx0] = w0;
+        idt_buf@[(idx0 + 1)] = isr_hi;
+    ]
+
+    // IDTR at bss_base + 4160
+    idtr_buf@[0] = IDT_LIMIT | ((idt_buf & 281474976710655) << 16);
+    idtr_buf@[1] = (idt_buf >> 48) & 65535;
+
+    // Load IDTR and Task Register (ltr 0x18)
+    cpu_load_idt!(idtr_buf);
+
+    ret 0;
+]
+
+fn cpu_init_irqs!(ram_tape) [
+    bss_base = ram_tape - 49216;
+    idt_buf = bss_base + 4352;
+    irq_stubs_base = cpu_get_irq_stubs!(bss_base);
+
+    loop (k:16 = 0 .. 16) [
+        irq_stub = irq_stubs_base + (k << 4);
+        irq_lo = irq_stub & 65535;
+        irq_mid = (irq_stub >> 16) & 65535;
+        w0 = irq_lo | (IDT_CODE_SEL << 16) | (IDT_GATE_ATTR << 40) | (irq_mid << 48);
+        idx0 = 64 + (k << 1);
+        idt_buf@[idx0] = w0;
+        idt_buf@[(idx0 + 1)] = irq_stub >> 32;
+    ]
+    ret 0;
+]

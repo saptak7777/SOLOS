@@ -1,0 +1,61 @@
+// ==========================================
+// case/data/case_defs.sinc
+// Canonical Page-Native CoW Filesystem Constants & Lenses (Strict Law 15)
+// ==========================================
+
+const CASE_MAGIC             = 1163084099;         // "CASE" (0x45534143)
+const CASE_VERSION           = 1;
+const CASE_SB_LBA            = 128;                // Page 16: Superblock
+const CASE_BITMAP_LBA        = 136;                // Page 17: 4 KB Page Bitmap
+const CASE_TABLE_LBA         = 144;                // Page 18: 64 x 64 B Artifact Table
+const CASE_DATA_START_PG     = 25;                 // LBA 200+
+const CASE_MAX_ENTRIES       = 64;
+
+// Superblock Lenses (Page 16, LBA 128)
+const CASE_SB_LENS_MAGIC     = 0;
+const CASE_SB_LENS_VER       = 1;
+const CASE_SB_LENS_GEN       = 2;
+const CASE_SB_LENS_TOTAL_PG  = 3;
+
+// Artifact Types (Fail-Fast Role Tags)
+const CASE_TYPE_FREE         = 0;
+const CASE_TYPE_SAFE         = 1;
+const CASE_TYPE_TRG          = 2;
+const CASE_TYPE_DATA         = 3;
+
+// 64-Byte Artifact Table Entry Lenses (8 QWORDs)
+// META Layout: [Type:8 | Flags:8 | Epoch:16 | Pages:32]
+const CASE_LENS_META         = 0;
+const CASE_LENS_START_PG     = 1;
+const CASE_LENS_BYTES        = 2;
+const CASE_LENS_HASH         = 3;
+const CASE_LENS_RESERVED     = 4;
+const CASE_LENS_NAME_0       = 5;
+const CASE_LENS_NAME_1       = 6;
+const CASE_LENS_OWNER        = 7;
+
+// Shared Artifact Query Result Lenses (out_meta@[0..4])
+const CASE_EXT_PG            = 0;
+const CASE_EXT_PAGES         = 1;
+const CASE_EXT_BYTES         = 2;
+const CASE_EXT_HASH          = 3;
+const CASE_EXT_META          = 4;
+
+// FNV-1a 64-Bit Integrity Constants
+const CASE_FNV_OFFSET        = -3750763034362895579;
+const CASE_FNV_PRIME         = 1099511628211;
+
+// Canonical System Artifact Names (Pure TRG Little-Endian QWORDs)
+const FILE_V1_SAFE_0         = 8478446585722159;    // "v1.safe"
+const FILE_V2_SAFE_0         = 8478446585722415;    // "v2.safe"
+const FILE_MINIT_SAFE_0      = 1886160714249740838; // "minit.sa"
+const FILE_MINIT_SAFE_1      = 7711;                // "fe"
+const FILE_SELFTEST_SAFE_0   = 3255009809826913836; // "selftest"
+const FILE_SELFTEST_SAFE_1   = 129370828029;        // ".safe"
+const FILE_LIT_SHELL_SAFE_0  = 2674611705646752293; // "lit_shel"
+const FILE_LIT_SHELL_SAFE_1  = 33118931975461;      // "l.safe"
+const FILE_SINC_SAFE_0       = 2241153230180917804; // "sinc.saf"
+const FILE_SINC_SAFE_1       = 30;                  // "e"
+const FILE_APP_TRG_0         = 9054675775596826;    // "app.trg"
+const FILE_APP_TRG_1         = 0;
+

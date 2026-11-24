@@ -1,0 +1,398 @@
+// ==========================================
+// lit_shell/sys/entry.sinc
+// Sovereign LIT Interactive Shell Cell (Strict Law 15)
+// ==========================================
+
+fn shell_parse_name!(buf, idx, max_len, out_pair) [
+    w_len = shell_get_word_len(buf, idx, max_len);
+    if (w_len == 0) [
+        ret 0;
+    ]
+    n0 = 0;
+    n1 = 0;
+    if (!(w_len > 8)) [
+        n0 = shell_read_word_qw(buf, idx, max_len);
+    ]
+    if (w_len > 8) [
+        n0 = shell_read_word_qw(buf, idx, (idx + 8));
+        n1 = shell_read_word_qw(buf, (idx + 8), (idx + w_len));
+    ]
+    out_pair@[0] = n0;
+    out_pair@[1] = n1;
+    ret w_len;
+]
+
+fn shell_print_name!(console, dir_buf, base) [
+    name_base = dir_buf + (base << 3) + (CASE_LENS_NAME_0 << 3);
+    stopped = 0;
+    loop (i:16 = 0 .. 16) [
+        if (stopped == 0) [
+            ch = name_base@[i * 1];
+            if (ch == 0) [
+                stopped = 1;
+            ]
+            if (ch != 0) [
+                console_putc!(console, ch);
+            ]
+        ]
+    ]
+    ret 0;
+]
+
+fn shell_load_or_swap!(arena, buf, len, is_swap) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    idx1 = shell_skip_word(buf, 0, len);
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (shell_parse_name!(buf, idx1, len, ext_buf) == 0) [
+        ret 0;
+    ]
+    if (case_find_artifact!(arena, ext_buf@[0], ext_buf@[1], ext_buf) != 0) [
+        console_print_qword!(console, STR_FS_NOT_FOUND_0, 8);
+        console_print_qword!(console, STR_FS_NOT_FOUND_1, 6);
+        console_newline!(console);
+        ret 0;
+    ]
+    if (case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_SAFE) [
+        console_print_qword!(console, STR_FAIL_TAG_0, 6);
+        console_newline!(console);
+        ret 0;
+    ]
+    idx2 = shell_skip_word(buf, idx1, len);
+    slot = shell_parse_dec(buf, idx2, len);
+    lba = ext_buf@[CASE_EXT_PG] << 3;
+    secs = ext_buf@[CASE_EXT_PAGES] << 3;
+    hash_val = ext_buf@[CASE_EXT_HASH];
+    op = EXOCALL_SLOT_LOAD;
+    if (is_swap != 0) [
+        op = EXOCALL_SLOT_HOTSWAP;
+    ]
+    r = exocall!(arena, op, slot, lba, secs, hash_val);
+    console_print_qword!(console, STR_RES_TAG_0, 5);
+    console_print_dec!(console, r);
+    console_newline!(console);
+    ret 0;
+]
+
+fn shell_execute_line!(arena, scratch, buf, len) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    if (len == 0) [
+        ret 0;
+    ]
+
+    cmd = shell_match_cmd(buf, len);
+
+    if (cmd == CMD_HELP) [
+        console_print_qword!(console, STR_HELP_MSG_0, 8);
+        console_print_qword!(console, STR_HELP_MSG_1, 8);
+        console_print_qword!(console, STR_HELP_MSG_2, 8);
+        console_print_qword!(console, STR_HELP_MSG_3, 8);
+        console_print_qword!(console, STR_HELP_MSG_4, 8);
+        console_print_qword!(console, STR_HELP_MSG_5, 8);
+        console_print_qword!(console, STR_HELP_MSG_6, 8);
+        console_print_qword!(console, STR_HELP_MSG_7, 8);
+        console_print_qword!(console, STR_HELP_MSG_8, 8);
+        console_print_qword!(console, STR_HELP_MSG_9, 1);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    if (cmd == CMD_MEM) [
+        pmm = arena@[ARENA_LENS_PMM];
+        free_pgs = pmm@[PMM_LENS_FREE_PAGES];
+        max_pgs = pmm@[PMM_LENS_MAX_PAGE];
+        console_print_qword!(console, STR_PMM_FREE_0, 8);
+        console_print_qword!(console, STR_PMM_FREE_1, 4);
+        console_print_dec!(console, free_pgs);
+        console_print_qword!(console, STR_PMM_MAX_0, 8);
+        console_print_dec!(console, max_pgs);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    if (cmd == CMD_TIME) [
+        timer = arena@[ARENA_LENS_TIMER];
+        ticks = timer@[0];
+        console_print_qword!(console, STR_PIT_TICKS_0, 8);
+        console_print_qword!(console, STR_PIT_TICKS_1, 3);
+        console_print_dec!(console, ticks);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    if (cmd == CMD_SLOTS) [
+        table = arena@[ARENA_LENS_LIT_TABLE];
+        loop (s:64 = 0 .. 64) [
+            if (slot_is_occupied(table, s) != 0) [
+                h = slot_get_hash(table, s);
+                p = slot_get_pages(table, s);
+                console_print_qword!(console, STR_SLOT_TAG_0, 5);
+                console_print_dec!(console, s);
+                console_print_qword!(console, STR_HASH_TAG_0, 7);
+                console_print_dec!(console, h);
+                console_print_qword!(console, STR_PAGES_TAG_0, 6);
+                console_print_dec!(console, p);
+                console_newline!(console);
+            ]
+        ]
+        ret 0;
+    ]
+
+    if (cmd == CMD_CLEAR) [
+        console_clear!(console);
+        ret 0;
+    ]
+
+    if (cmd == CMD_QUIT) [
+        scratch@[SCRATCH_LENS_RUNNING] = 0;
+        ret 0;
+    ]
+
+    if (cmd == CMD_LOAD) [
+        ret shell_load_or_swap!(arena, buf, len, 0);
+    ]
+
+    if (cmd == CMD_CALL) [
+        idx1 = shell_skip_word(buf, 0, len);
+        slot = shell_parse_dec(buf, idx1, len);
+        idx2 = shell_skip_word(buf, idx1, len);
+        arg = shell_parse_dec(buf, idx2, len);
+        r = exocall!(arena, EXOCALL_SLOT_CALL, slot, arg, 0, 0);
+        console_print_qword!(console, STR_RES_TAG_0, 5);
+        console_print_dec!(console, r);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    if (cmd == CMD_SWAP) [
+        ret shell_load_or_swap!(arena, buf, len, 1);
+    ]
+
+    if (cmd == CMD_UNLOAD) [
+        idx1 = shell_skip_word(buf, 0, len);
+        slot = shell_parse_dec(buf, idx1, len);
+        r = exocall!(arena, EXOCALL_SLOT_UNLOAD, slot, 0, 0, 0);
+        console_print_qword!(console, STR_RES_TAG_0, 5);
+        console_print_dec!(console, r);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    if (cmd == CMD_LS) [
+        dir_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+        if (dir_buf == 0) [
+            console_print_qword!(console, STR_FAIL_TAG_0, 6);
+            console_newline!(console);
+            ret 0;
+        ]
+        r_dir = exocall!(arena, EXOCALL_NVME_RW, 0, CASE_TABLE_LBA, 8, dir_buf);
+        if (r_dir != 0) [
+            exocall!(arena, EXOCALL_PMM_FREE, dir_buf, 1, 0, 0);
+            console_print_qword!(console, STR_FAIL_TAG_0, 6);
+            console_newline!(console);
+            ret 0;
+        ]
+        console_print_qword!(console, STR_FS_DIR_HEADER_0, 8);
+        console_print_qword!(console, STR_FS_DIR_HEADER_1, 8);
+        console_print_qword!(console, STR_FS_DIR_HEADER_2, 4);
+        console_newline!(console);
+        loop (i:64 = 0 .. CASE_MAX_ENTRIES) [
+            base = i << 3;
+            meta = dir_buf@[(base + CASE_LENS_META)];
+            ty = case_entry_type(meta);
+            if (ty != CASE_TYPE_FREE) [
+                shell_print_name!(console, dir_buf, base);
+                pg = dir_buf@[(base + CASE_LENS_START_PG)];
+                ep = case_entry_epoch(meta);
+                sz = dir_buf@[(base + CASE_LENS_BYTES)];
+                console_print_qword!(console, STR_FS_PG_TAG_0, 5);
+                console_print_dec!(console, pg);
+                console_print_qword!(console, STR_FS_TY_TAG_0, 5);
+                console_print_dec!(console, ty);
+                console_print_qword!(console, STR_FS_EP_TAG_0, 5);
+                console_print_dec!(console, ep);
+                console_print_qword!(console, STR_FS_SIZE_TAG_0, 8);
+                console_print_dec!(console, sz);
+                console_newline!(console);
+            ]
+        ]
+        exocall!(arena, EXOCALL_PMM_FREE, dir_buf, 1, 0, 0);
+        ret 0;
+    ]
+
+    if (cmd == CMD_CAT) [
+        idx1 = shell_skip_word(buf, 0, len);
+        ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+        if (shell_parse_name!(buf, idx1, len, ext_buf) == 0) [
+            ret 0;
+        ]
+        if (case_find_artifact!(arena, ext_buf@[0], ext_buf@[1], ext_buf) != 0) [
+            console_print_qword!(console, STR_FS_NOT_FOUND_0, 8);
+            console_print_qword!(console, STR_FS_NOT_FOUND_1, 6);
+            console_newline!(console);
+            ret 0;
+        ]
+        file_pg = ext_buf@[CASE_EXT_PG];
+        file_sz = ext_buf@[CASE_EXT_BYTES];
+        file_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+        if (file_buf == 0) [
+            ret 0;
+        ]
+        r_read = case_rw_pages!(arena, 0, file_pg, 1, file_buf);
+        if (r_read == 0) [
+            p_len = file_sz;
+            if (p_len > 512) [
+                p_len = 512;
+            ]
+            loop (b:512 = 0 .. p_len) [
+                b_ch = file_buf@[b * 1];
+                console_putc!(console, b_ch);
+            ]
+            console_newline!(console);
+        ]
+        exocall!(arena, EXOCALL_PMM_FREE, file_buf, 1, 0, 0);
+        ret 0;
+    ]
+
+    if (cmd == CMD_RM) [
+        idx1 = shell_skip_word(buf, 0, len);
+        ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+        if (shell_parse_name!(buf, idx1, len, ext_buf) == 0) [
+            ret 0;
+        ]
+        if (case_delete_file!(arena, ext_buf@[0], ext_buf@[1]) != 0) [
+            console_print_qword!(console, STR_FS_NOT_FOUND_0, 8);
+            console_print_qword!(console, STR_FS_NOT_FOUND_1, 6);
+            console_newline!(console);
+            ret 0;
+        ]
+        console_print_qword!(console, STR_FS_RM_OK_0, 8);
+        console_print_qword!(console, STR_FS_RM_OK_1, 4);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    if (cmd == CMD_BUILD) [
+        idx1 = shell_skip_word(buf, 0, len);
+        ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+        if (shell_parse_name!(buf, idx1, len, ext_buf) == 0) [
+            ret 0;
+        ]
+        src_n0 = ext_buf@[0];
+        src_n1 = ext_buf@[1];
+        idx2 = shell_skip_word(buf, idx1, len);
+        target_slot = shell_parse_dec(buf, idx2, len);
+        r_build = cell_compile_and_load!(arena, src_n0, src_n1, target_slot);
+        console_print_qword!(console, STR_RES_TAG_0, 5);
+        console_print_dec!(console, r_build);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    console_print_qword!(console, STR_UNKNOWN_CMD_0, 8);
+    console_print_qword!(console, STR_UNKNOWN_CMD_1, 8);
+    console_print_qword!(console, STR_UNKNOWN_CMD_2, 8);
+    console_print_qword!(console, STR_UNKNOWN_CMD_3, 3);
+    console_newline!(console);
+    ret 0;
+]
+
+fn shell_handle_scancode!(arena, scratch, scancode) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    shift = scratch@[SCRATCH_LENS_SHIFT_STATE];
+    new_shift = trg_update_shift_state(scancode, shift);
+    scratch@[SCRATCH_LENS_SHIFT_STATE] = new_shift;
+
+    if (trg_is_break_code(scancode) != 0) [
+        ret 0;
+    ]
+
+    trg = trg_scancode_to_trg(scancode, new_shift);
+    if (trg == -1) [
+        ret 0;
+    ]
+
+    line_len = scratch@[SCRATCH_LENS_LINE_LEN];
+    buf_base = scratch + (SCRATCH_LENS_LINE_BUF << 3);
+
+    // Enter / Return
+    if (trg == 241) [
+        console_newline!(console);
+        shell_execute_line!(arena, scratch, buf_base, line_len);
+        scratch@[SCRATCH_LENS_LINE_LEN] = 0;
+        console_print_qword!(console, STR_SHELL_PROMPT_0, 2);
+        console_flush_screen!(console);
+        ret 0;
+    ]
+
+    // Backspace
+    if (trg == TRG_BS) [
+        if (line_len > 0) [
+            line_len = line_len - 1;
+            scratch@[SCRATCH_LENS_LINE_LEN] = line_len;
+            col = console@[CONSOLE_LENS_COL];
+            if (col > 0) [
+                console@[CONSOLE_LENS_COL] = col - 1;
+                console_putc!(console, 240);
+                console@[CONSOLE_LENS_COL] = col - 1;
+                console_flush_screen!(console);
+            ]
+        ]
+        ret 0;
+    ]
+
+    // Regular printable character
+    if (line_len < 64) [
+        buf_base@[line_len * 1] = trg;
+        scratch@[SCRATCH_LENS_LINE_LEN] = line_len + 1;
+        console_putc!(console, trg);
+        console_flush_screen!(console);
+    ]
+    ret 0;
+]
+
+fn shell_run_repl!(arena, scratch) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    ring = arena@[ARENA_LENS_RING];
+
+    scratch@[SCRATCH_LENS_SHIFT_STATE] = 0;
+    scratch@[SCRATCH_LENS_LINE_LEN] = 0;
+    scratch@[SCRATCH_LENS_RUNNING] = 1;
+
+    console_print_qword!(console, STR_SHELL_BANNER_0, 8);
+    console_print_qword!(console, STR_SHELL_BANNER_1, 8);
+    console_print_qword!(console, STR_SHELL_BANNER_2, 8);
+    console_print_qword!(console, STR_SHELL_BANNER_3, 2);
+    console_newline!(console);
+    console_print_qword!(console, STR_SHELL_PROMPT_0, 2);
+    console_flush_screen!(console);
+
+    loop (step:1000000000 = 0 .. 1000000000) [
+        if (scratch@[SCRATCH_LENS_RUNNING] == 0) [
+            ret 0;
+        ]
+        scancode = ring_pop!(ring);
+        if (scancode < 0) [
+            exocall!(arena, EXOCALL_WAIT_TICKS, 1, 0, 0, 0);
+        ]
+        if (!(scancode < 0)) [
+            shell_handle_scancode!(arena, scratch, scancode);
+        ]
+    ]
+    ret 0;
+]
+
+fn main!(arena) [
+    test_mode = arena@[ARENA_LENS_TOKEN];
+
+    if (test_mode == SHELL_TEST_MODE) [
+        ring = arena@[ARENA_LENS_RING];
+        ring_push!(ring, 16);
+        ring_push!(ring, 22);
+        ring_push!(ring, 23);
+        ring_push!(ring, 20);
+        ring_push!(ring, 28);
+    ]
+
+    scratch = arena@[ARENA_LENS_META_BUF] + 64;
+    ret shell_run_repl!(arena, scratch);
+]

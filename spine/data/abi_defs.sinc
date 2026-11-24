@@ -1,0 +1,36 @@
+// ==========================================
+// spine/data/abi_defs.sinc
+// SHARK Kernel Linear Exchange Arena, Exocall & PMM Spine ABI
+// ==========================================
+
+// Linear Exchange Arena Lenses
+const ARENA_LENS_PMM       = 0;
+const ARENA_LENS_CONSOLE   = 1;
+const ARENA_LENS_NVME      = 2;
+const ARENA_LENS_RING      = 3;
+const ARENA_LENS_TIMER     = 4;
+const ARENA_LENS_CAP_TABLE = 5;
+const ARENA_LENS_LIVE_MASK = 6;
+const ARENA_LENS_TOKEN     = 7;
+const ARENA_LENS_CR3       = 8;
+const ARENA_LENS_LIT_TABLE = 9;
+const ARENA_LENS_META_BUF  = 10;
+const ARENA_LENS_EXOCALL   = 11;
+
+// Kernel Exocall Opcodes
+const EXOCALL_GET_FN_ADDR   = 0;
+const EXOCALL_SLOT_LOAD     = 1;
+const EXOCALL_SLOT_CALL     = 2;
+const EXOCALL_SLOT_HOTSWAP  = 3;
+const EXOCALL_SLOT_UNLOAD   = 4;
+const EXOCALL_PMM_ALLOC     = 5;
+const EXOCALL_PMM_FREE      = 6;
+const EXOCALL_NVME_RW       = 7;
+const EXOCALL_WAIT_TICKS    = 8;
+const EXOCALL_SLOT_LOAD_MEM = 9;
+
+// PMM Control Block Lenses
+const PMM_LENS_BITMAP_BASE = 0;
+const PMM_LENS_MAX_PAGE    = 1;
+const PMM_LENS_NUM_WORDS   = 2;
+const PMM_LENS_FREE_PAGES  = 3;

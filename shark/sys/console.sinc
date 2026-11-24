@@ -1,0 +1,174 @@
+// ==========================================
+// shark/sys/console.sinc
+// Unified Framebuffer Console Driver (Shared by SHARK & Cells, Strict Law 15)
+// ==========================================
+
+fn console_flush_screen!(state_ptr) [
+    fb_base = state_ptr@[CONSOLE_LENS_FB_BASE];
+    if (fb_base != 0) [
+        backbuffer = state_ptr@[CONSOLE_LENS_BACKBUFFER];
+        stride = state_ptr@[CONSOLE_LENS_STRIDE];
+        height = state_ptr@[CONSOLE_LENS_HEIGHT];
+        total_words = (stride * height) >> 3;
+        loop (w:4194304 = 0 .. total_words) [
+            fb_base@[w] = backbuffer@[w];
+        ]
+    ]
+    ret 0;
+]
+
+fn console_clear_backbuffer!(state_ptr) [
+    state_ptr@[CONSOLE_LENS_COL] = 0;
+    state_ptr@[CONSOLE_LENS_ROW] = 0;
+    backbuffer = state_ptr@[CONSOLE_LENS_BACKBUFFER];
+    stride = state_ptr@[CONSOLE_LENS_STRIDE];
+    height = state_ptr@[CONSOLE_LENS_HEIGHT];
+    total_words = (stride * height) >> 3;
+    c_lo = COLOR_BG & 4294967295;
+    bg_qw = (c_lo << 32) | c_lo;
+    loop (w:4194304 = 0 .. total_words) [
+        backbuffer@[w] = bg_qw;
+    ]
+    ret 0;
+]
+
+fn console_clear!(state_ptr) [
+    console_clear_backbuffer!(state_ptr);
+    console_flush_screen!(state_ptr);
+    ret 0;
+]
+
+fn console_init!(state_ptr) [
+    width = state_ptr@[CONSOLE_LENS_WIDTH];
+    height = state_ptr@[CONSOLE_LENS_HEIGHT];
+    state_ptr@[CONSOLE_LENS_MAX_COLS] = width >> 3;
+    state_ptr@[CONSOLE_LENS_MAX_ROWS] = height >> 4;
+    state_ptr@[CONSOLE_LENS_FG] = COLOR_FG_WHITE;
+    state_ptr@[CONSOLE_LENS_BG] = COLOR_BG;
+    console_clear_backbuffer!(state_ptr);
+    ret 0;
+]
+
+fn console_set_color!(state_ptr, fg, bg) [
+    state_ptr@[CONSOLE_LENS_FG] = fg;
+    state_ptr@[CONSOLE_LENS_BG] = bg;
+    ret 0;
+]
+
+fn console_newline!(state_ptr) [
+    state_ptr@[CONSOLE_LENS_COL] = 0;
+    row = state_ptr@[CONSOLE_LENS_ROW] + 1;
+    max_rows = state_ptr@[CONSOLE_LENS_MAX_ROWS];
+    if (row < max_rows) [
+        state_ptr@[CONSOLE_LENS_ROW] = row;
+    ]
+    ret 0;
+]
+
+fn console_putc!(state_ptr, trg_slot) [
+    if (trg_slot == 241) [
+        console_newline!(state_ptr);
+        ret 0;
+    ]
+
+    col = state_ptr@[CONSOLE_LENS_COL];
+    row = state_ptr@[CONSOLE_LENS_ROW];
+    max_cols = state_ptr@[CONSOLE_LENS_MAX_COLS];
+    max_rows = state_ptr@[CONSOLE_LENS_MAX_ROWS];
+
+    if (!(col < max_cols)) [
+        console_newline!(state_ptr);
+        col = state_ptr@[CONSOLE_LENS_COL];
+        row = state_ptr@[CONSOLE_LENS_ROW];
+    ]
+
+    if (!(row < max_rows)) [
+        ret 0;
+    ]
+
+    px = col << 3;
+    py = row << 4;
+    backbuffer = state_ptr@[CONSOLE_LENS_BACKBUFFER];
+    stride = state_ptr@[CONSOLE_LENS_STRIDE];
+    font_ptr = state_ptr@[CONSOLE_LENS_FONT_PTR];
+    fg = state_ptr@[CONSOLE_LENS_FG];
+    bg = state_ptr@[CONSOLE_LENS_BG];
+
+    glyph_base = font_ptr + (trg_slot << 4);
+    x_word_base = px >> 1;
+
+    loop (r:16 = 0 .. 16) [
+        y = py + r;
+        line_base = backbuffer + (y * stride);
+        row_byte = glyph_base@[r * 1];
+        loop (pair:4 = 0 .. 4) [
+            qw = pack_pixel_pair_qword(row_byte, pair, fg, bg);
+            idx = x_word_base + pair;
+            line_base@[idx] = qw;
+        ]
+    ]
+
+    state_ptr@[CONSOLE_LENS_COL] = col + 1;
+    ret 0;
+]
+
+fn console_print_hex64!(state_ptr, val) [
+    console_putc!(state_ptr, 52);
+    console_putc!(state_ptr, 49);
+    loop (k:16 = 0 .. 16) [
+        shift = 60 - (k << 2);
+        nibble = (val >> shift) & 15;
+        if (nibble < 10) [
+            ch = 52 + nibble;
+            console_putc!(state_ptr, ch);
+        ]
+        if (!(nibble < 10)) [
+            ch = nibble - 10;
+            console_putc!(state_ptr, ch);
+        ]
+    ]
+    ret 0;
+]
+
+fn console_print_dec!(state_ptr, val) [
+    if (val < 0) [
+        console_putc!(state_ptr, 113);
+        val = 0 - val;
+    ]
+    p = 1000000000;
+    started = 0;
+    rem = val;
+    loop (k:10 = 0 .. 10) [
+        d = rem / p;
+        if (d > 0) [
+            started = 1;
+        ]
+        if (k == 9) [
+            started = 1;
+        ]
+        if (started != 0) [
+            console_putc!(state_ptr, 52 + d);
+        ]
+        rem = rem - (d * p);
+        p = p / 10;
+    ]
+    ret 0;
+]
+
+fn console_print_qword!(state_ptr, qw, len) [
+    loop (i:8 = 0 .. len) [
+        shift = i << 3;
+        ch = (qw >> shift) & 255;
+        console_putc!(state_ptr, ch);
+    ]
+    ret 0;
+]
+
+fn console_print_divider!(state_ptr, char_code) [
+    cols = state_ptr@[CONSOLE_LENS_MAX_COLS];
+    loop (c:128 = 0 .. cols) [
+        console_putc!(state_ptr, char_code);
+    ]
+    console_newline!(state_ptr);
+    ret 0;
+]

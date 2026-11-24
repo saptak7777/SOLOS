@@ -1,0 +1,120 @@
+// ==========================================
+// case/pure/case_alloc.sinc
+// Canonical Pure CASE Directory Mutators & 4 KB Page Bitmap Allocator (Strict Law 15)
+// ==========================================
+
+fn case_pack_meta(type_val, flags, epoch, pages) [
+    ret (type_val & 255) | ((flags & 255) << 8) | ((epoch & 65535) << 16) | (pages << 32);
+]
+
+fn case_find_free_entry(table_buf) [
+    free_idx = -1;
+    loop (i:64 = 0 .. CASE_MAX_ENTRIES) [
+        if (free_idx == -1) [
+            base = i << 3;
+            meta = table_buf@[(base + CASE_LENS_META)];
+            if (case_entry_type(meta) == CASE_TYPE_FREE) [
+                free_idx = i;
+            ]
+        ]
+    ]
+    ret free_idx;
+]
+
+fn case_set_entry!(table_buf, idx, type_val, epoch, pages, start_pg, byte_len, hash_val, name_0, name_1) [
+    base = idx << 3;
+    table_buf@[(base + CASE_LENS_META)]     = case_pack_meta(type_val, 0, epoch, pages);
+    table_buf@[(base + CASE_LENS_START_PG)] = start_pg;
+    table_buf@[(base + CASE_LENS_BYTES)]    = byte_len;
+    table_buf@[(base + CASE_LENS_HASH)]     = hash_val;
+    table_buf@[(base + CASE_LENS_RESERVED)] = 0;
+    table_buf@[(base + CASE_LENS_NAME_0)]   = name_0;
+    table_buf@[(base + CASE_LENS_NAME_1)]   = name_1;
+    table_buf@[(base + CASE_LENS_OWNER)]    = 0;
+    ret 0;
+]
+
+fn case_clear_entry!(table_buf, idx) [
+    base = idx << 3;
+    table_buf@[(base + CASE_LENS_META)] = CASE_TYPE_FREE;
+    ret 0;
+]
+
+fn case_mark_pages!(bitmap_buf, start_pg, num_pages, is_alloc) [
+    loop (k:512 = 0 .. num_pages) [
+        pg = start_pg + k;
+        w = pg >> 6;
+        b = pg & 63;
+        bit = 1 << b;
+        if (is_alloc != 0) [
+            bitmap_buf@[w] = bitmap_buf@[w] | bit;
+        ]
+        if (is_alloc == 0) [
+            bitmap_buf@[w] = bitmap_buf@[w] & (-1 ^ bit);
+        ]
+    ]
+    ret 0;
+]
+
+fn case_alloc_pages!(bitmap_buf, total_pages, num_pages) [
+    if (num_pages < 1) [
+        ret -1;
+    ]
+    if (total_pages > 32768) [
+        total_pages = 32768;
+    ]
+    max_words = (total_pages + 63) >> 6;
+
+    if (num_pages == 1) [
+        loop (w:512 = 0 .. max_words) [
+            word = bitmap_buf@[w];
+            if (word != -1) [
+                b_idx = ctz64(-1 ^ word);
+                pg = (w << 6) | b_idx;
+                if (pg < total_pages) [
+                    bitmap_buf@[w] = word | (1 << b_idx);
+                    ret pg;
+                ]
+            ]
+        ]
+        ret -1;
+    ]
+
+    run_start = -1;
+    run_len = 0;
+    found = 0;
+    loop (w:512 = 0 .. max_words) [
+        if (found == 0) [
+            word = bitmap_buf@[w];
+            if ((word != -1) | (run_len != 0)) [
+                loop (b:64 = 0 .. 64) [
+                    if (found == 0) [
+                        pg = (w << 6) | b;
+                        if (pg < total_pages) [
+                            is_used = (word >> b) & 1;
+                            if (is_used == 0) [
+                                if (run_len == 0) [
+                                    run_start = pg;
+                                ]
+                                run_len = run_len + 1;
+                                if (run_len == num_pages) [
+                                    found = 1;
+                                ]
+                            ]
+                            if (is_used != 0) [
+                                run_len = 0;
+                                run_start = -1;
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+    ]
+    if (found == 0) [
+        ret -1;
+    ]
+    case_mark_pages!(bitmap_buf, run_start, num_pages, 1);
+    ret run_start;
+]
+

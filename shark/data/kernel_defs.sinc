@@ -1,0 +1,102 @@
+// ==========================================
+// shark/data/kernel_defs.sinc
+// SHARK Exokernel Constants, Lenses and Reverse Thunks
+// ==========================================
+
+// Reverse Thunk 1: io_out32 (located at k_code_start - 32)
+extern fn io_out32!();
+
+// Reverse Thunk 2: cpu_reload_gdt (located at k_code_start - 64)
+extern fn cpu_reload_gdt!();
+
+// Reverse Thunk 3: cpu_load_idt (located at k_code_start - 96)
+extern fn cpu_load_idt!();
+
+// Reverse Thunk 4: cpu_get_isr_stubs (located at k_code_start - 128)
+extern fn cpu_get_isr_stubs!();
+
+// Reverse Thunk 5: cpu_halt (located at k_code_start - 160)
+extern fn cpu_halt!();
+
+// Reverse Thunk 6: mmio_read32 (located at k_code_start - 192)
+extern fn mmio_read32!();
+
+// Reverse Thunk 7: mmio_write32 (located at k_code_start - 224)
+extern fn mmio_write32!();
+
+// Reverse Thunk 8: exec_safe_cell (located at k_code_start - 256)
+extern fn exec_safe_cell!();
+
+// Reverse Thunk 9: io_in8 (located at k_code_start - 288)
+extern fn io_in8!();
+
+// Reverse Thunk 10: io_out8 (located at k_code_start - 320)
+extern fn io_out8!();
+
+// Reverse Thunk 11: cpu_set_interrupts (located at k_code_start - 352)
+extern fn cpu_set_interrupts!();
+
+// Reverse Thunk 12: cpu_wait_interrupt (located at k_code_start - 384)
+extern fn cpu_wait_interrupt!();
+
+// Reverse Thunk 13: cpu_get_irq_stubs (located at k_code_start - 416)
+extern fn cpu_get_irq_stubs!();
+
+// Reverse Thunk 14: cpu_get_cr3 (located at k_code_start - 448)
+extern fn cpu_get_cr3!();
+
+// Reverse Thunk 15: cpu_invlpg (located at k_code_start - 480)
+extern fn cpu_invlpg!();
+
+const TRG_DEBUG_PORT = 244; // 0xF4
+const TEST_PASS_CODE = 42;
+
+// GDT Descriptors & Selectors
+const GDT_CODE_DESC  = 49427445715107839; // 0x00AF9A000000FFFF: Ring 0 64-bit Code (0x08)
+const GDT_DATA_DESC  = 58425848876826623; // 0x00CF92000000FFFF: Ring 0 64-bit Data (0x10)
+const GDT_LIMIT      = 39;                // 5 entries * 8 - 1 = 39 (0x27)
+
+// TSS Descriptors & Offsets
+const TSS_LIMIT      = 103; // 104 bytes - 1 = 103 (0x67)
+const TSS_TYPE_ATTR  = 137; // 0x89: Present, Ring 0, 64-bit Available TSS
+const TSS_IOMAP_BASE = 104; // 0x68: Offset to I/O bitmap (none)
+
+// IDT Descriptors & Selectors
+const IDT_GATE_ATTR  = 142;  // 0x8E: Present, Ring 0, 64-bit Interrupt Gate
+const IDT_CODE_SEL   = 8;    // 0x08: CS selector
+const IDT_LIMIT      = 4095; // 256 entries * 16 - 1 = 4095 (0x0FFF)
+
+// PMM & Console Errors
+const ERR_PMM_NO_RAM       = 20;
+const ERR_PMM_OOM          = 21;
+const ERR_CONSOLE_OOM      = 40;
+
+// Pure TRG Telemetry & Title QWORD Constants (Signed Little-Endian i64)
+const STR_SHARK_V0            = 3760488139903207186;  // "SHARK v0" (len 8)
+const STR_BOOT_PREFIX         = -643154868458557200;  // "  [BOOT]" (len 8)
+const STR_TAG_CPU             = 264943984116470;      // "[CPU] "   (len 6)
+const STR_TAG_PMM             = 264943849705462;      // "[PMM] "   (len 6)
+const STR_TAG_RAM             = 264943848919542;      // "[RAM] "   (len 6)
+const STR_TAG_NVME            = 67825591165193718;    // "[NVME] "  (len 7)
+const STR_TAG_GOP             = 264943900165878;      // "[GOP] "   (len 6)
+const STR_TAG_TRG             = 264943749370870;      // "[TRG] "   (len 6)
+const STR_TAG_READY           = -1083370784195079690; // "[READY] " (len 8)
+const STR_REGIONS             = 3181555788793392112;  // " regions" (len 8)
+const STR_AVX512              = -1137663335037725440; // "AVX-512 " (len 8)
+const STR_AVX2                = -1085102595705989888; // "AVX2    " (len 8)
+const STR_FREE                = -1144444084737246480; // " | free " (len 8)
+const STR_MAX                 = -1085313521804086288; // " / max  " (len 8)
+
+// Milestone 7: Linear Exchange Arena & Sovereign Cell Lenses
+const ARENA_BSS_OFFSET     = 28672; // bss_base + 0x7000 (64-byte aligned)
+
+// Phase 4A/4B: Bare-Metal LIT Constants & Errors
+const LIT_TABLE_BSS_OFFSET = 30720; // bss_base + 0x7800 (64 slots * 32B = 2048B)
+const ERR_LIT_LOAD         = 90;
+const ERR_LIT_PARITY       = 94;
+
+// Reverse Thunk 16: cpu_write_cr0_wp (located at k_code_start - 512)
+extern fn cpu_write_cr0_wp!();
+
+// Reverse Thunk 17: cpu_get_fn_addr (located at k_code_start - 544)
+extern fn cpu_get_fn_addr!();

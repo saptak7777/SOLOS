@@ -1,0 +1,60 @@
+// ==========================================
+// stabl/pure/stabl_map.sinc
+// Pure compaction of UEFI memory map to 1-QWORD SINC RAM Tape
+// ==========================================
+
+fn compact_ram_tape!(map_buf, map_size, desc_size, ram_tape) [
+    num_descs = 0;
+    if (desc_size > 0) [
+        num_descs = map_size / desc_size;
+    ]
+    count = 0;
+    curr = map_buf;
+
+    loop (i:4096 = 0 .. num_descs) [
+        type = curr@[0] & 4294967295;
+        phys_start = curr@[1];
+        pages = curr@[3];
+
+        // Usable memory types in UEFI:
+        // 7: EfiConventionalMemory
+        // 3: EfiBootServicesCode
+        // 4: EfiBootServicesData
+        is_usable = (type == 7) | (type == 3) | (type == 4);
+
+        if (is_usable != 0) [
+            base_page = phys_start >> 12;
+
+            // Quarantine Page 0 (0x0000..0x0FFF)
+            if (base_page == 0) [
+                base_page = 1;
+                pages = pages - 1;
+            ]
+
+            // Zero-Page Guard: do not emit 0-page entries
+            if (pages > 0) [
+                merged = 0;
+                if (count > 0) [
+                    last_idx = count - 1;
+                    prev = ram_tape@[last_idx];
+                    prev_base = (prev >> 32) & 4294967295;
+                    prev_pages = prev & 4294967295;
+                    if (base_page == (prev_base + prev_pages)) [
+                        new_pages = prev_pages + pages;
+                        ram_tape@[last_idx] = (prev_base << 32) | (new_pages & 4294967295);
+                        merged = 1;
+                    ]
+                ]
+
+                if (merged == 0) [
+                    ram_tape@[count] = (base_page << 32) | (pages & 4294967295);
+                    count = count + 1;
+                ]
+            ]
+        ]
+
+        curr = curr + desc_size;
+    ]
+
+    ret count;
+]

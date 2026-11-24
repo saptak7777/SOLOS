@@ -1,0 +1,15 @@
+// ==========================================
+// minit/data/minit_defs.sinc
+// Service Descriptor Lenses & Policies (Strict Law 15)
+// ==========================================
+
+const SVC_LENS_DEPS        = 0;
+const SVC_LENS_EXTENT      = 1;
+const SVC_LENS_META        = 2;
+const SVC_LENS_TOKEN       = 3;
+
+const SVC_POLICY_CRITICAL  = 0;
+const SVC_POLICY_ONESHOT   = 1;
+
+const MINIT_PASS_CODE      = 2048;
+

@@ -1,0 +1,25 @@
+// ==========================================
+// minit/pure/dag.sinc
+// 100% Pure Bitmask Service DAG Resolver (Strict Law 15)
+// ==========================================
+
+fn dag_pick_next_runnable(svc_table, wanted_mask, ready_mask) [
+    pending = wanted_mask & (-1 ^ ready_mask);
+    if (pending == 0) [
+        ret -1;
+    ]
+    loop (step:64 = 0 .. 64) [
+        if (pending == 0) [
+            ret -1;
+        ]
+        s = ctz64(pending);
+        idx = (s << 2) + SVC_LENS_DEPS;
+        deps = svc_table@[idx];
+        if ((deps & ready_mask) == deps) [
+            ret s;
+        ]
+        pending = pending & (pending - 1);
+    ]
+    ret -1;
+]
+

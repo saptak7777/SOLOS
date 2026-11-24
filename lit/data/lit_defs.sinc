@@ -1,0 +1,28 @@
+// ==========================================
+// lit/data/lit_defs.sinc
+// LIT Runtime Constant Lenses & Geometry
+// ==========================================
+
+const SAFE_MAGIC           = 1396786245; // 0x53414645 ("SAFE")
+const SAFE_VERSION         = 1;
+const SAFE_ALIGNMENT       = 32;
+
+const LIT_EXIT_OK          = 0;
+const LIT_ERR_BAD_MAGIC    = 3;
+const LIT_ERR_BAD_GEOMETRY = 4;
+const LIT_ERR_MMAP         = 5;
+const LIT_ERR_SHORT_READ   = 6;
+const LIT_ERR_BAD_HASH     = 7;
+const LIT_ERR_SLOT_FULL    = 12;
+const LIT_ERR_SLOT_BOUNDS  = 13;
+const LIT_ERR_SLOT_EMPTY   = 14;
+
+const SLOT_ENTRY           = 0;
+const SLOT_BASE            = 1;
+const SLOT_PAGES           = 2;
+const SLOT_HASH            = 3;
+
+const LIT_MAX_SLOTS        = 64;
+
+const PAGE_SIZE            = 4096;
+const PAGE_MASK            = 4095;

@@ -1,0 +1,54 @@
+// ==========================================
+// stabl/data/stabl_defs.sinc
+// Simple Typeless Artifact Boot Loader (STABL)
+// Hardware offsets, lenses, and reverse thunk declarations
+// ==========================================
+
+// Reverse Thunk Table declarations (stride = -32 bytes from code_start 0x0400)
+// Thunk 1: 0x03E0 -> efi_call5 bridge
+extern fn efi_call5!();
+// Thunk 2: 0x03C0 -> io_in32 inline
+extern fn io_in32!();
+// Thunk 3: 0x03A0 -> io_out32 inline
+extern fn io_out32!();
+// Thunk 4: 0x0380 -> stabl_jump_kernel bridge
+extern fn stabl_jump_kernel!();
+
+// UEFI System Table and Boot Services QWORD offsets
+const SYSTEM_TABLE_BOOT_SERVICES       = 12; // 0x60
+const BOOT_SERVICES_GET_MEMORY_MAP     = 7;  // 0x38
+const BOOT_SERVICES_EXIT_BOOT_SERVICES = 29; // 0xE8
+const BOOT_SERVICES_LOCATE_PROTOCOL    = 40; // 0x140
+
+// GOP Protocol lenses
+const GOP_MODE          = 3; // 0x18
+const MODE_INFO         = 1; // 0x08
+const MODE_FB_BASE      = 3; // 0x18
+const INFO_STRIDE       = 4; // 0x20: PixelsPerScanLine
+
+// GOP GUID Little-Endian QWORDs
+// 9042a9de-23dc-4a38-96fb-7aded080516a
+const GUID_GOP_W0 = 5348063987722529246; // 0x4a3823dc9042a9de
+const GUID_GOP_W1 = 7661046075708078998; // 0x6a5180d0de7afb96
+
+// PCI Configuration Mechanism #1 Ports & Offsets
+const PCI_CONFIG_ADDRESS = 3320; // 0xCF8
+const PCI_CONFIG_DATA    = 3324; // 0xCFC
+
+// PCI Class Codes (Class << 16 | Subclass << 8 | ProgIF)
+const PCI_CLASS_NVME = 67586; // 0x010802: Mass Storage / NVM / NVMe
+const PCI_CLASS_AHCI = 67073; // 0x010601: Mass Storage / SATA / AHCI
+
+// PCI Command & BAR Masks
+const PCI_CMD_MMIO_BM = 6;          // Bit 1: Memory Space, Bit 2: Bus Master
+const BAR_MMIO_MASK   = 4294967280; // 0xFFFFFFF0: Mask 4 low attribute bits
+
+// Fail-Fast TRG Port 0xF4 Error Codes
+const TRG_DEBUG_PORT    = 244; // 0xF4
+const ERR_NO_AVX512     = 5;
+const ERR_GOP_NOT_FOUND = 10;
+const ERR_GOP_BLT_ONLY  = 11;
+const ERR_NO_STORAGE    = 20;
+const ERR_MEM_MAP_FAIL  = 30;
+const ERR_EXIT_BS_FAIL  = 31;
+

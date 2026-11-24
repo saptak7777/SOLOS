@@ -1,0 +1,154 @@
+// ==========================================
+// lit/sys/runner.sinc
+// LIT Bare-Metal Memory Mapping & Execution (Strict Law 15)
+// ==========================================
+
+fn lit_alloc_zero_pages!(pmm, code_bytes_est, out_meta) [
+    alloc_size = compute_page_aligned_size(PAGE_SIZE + code_bytes_est);
+    pages = alloc_size >> 12;
+    if (pages > 64) [
+        ret 0;
+    ]
+    mem = pmm_alloc_contiguous!(pmm, pages);
+    if (mem == 0) [
+        ret 0;
+    ]
+    total_words = pages << 9;
+    loop (z:32768 = 0 .. total_words) [
+        mem@[z] = 0;
+    ]
+    out_meta@[2] = pages;
+    ret mem;
+]
+
+fn lit_finalize_safe!(arena, mem, pages, code_bytes_est, expected_hash, out_meta) [
+    cr3_base = arena@[ARENA_LENS_CR3];
+    pmm = arena@[ARENA_LENS_PMM];
+    dispatch_fn = arena@[ARENA_LENS_EXOCALL];
+    abort_slot = arena@[ARENA_LENS_META_BUF] + 32;
+    k_code_start = mem + PAGE_SIZE;
+
+    err = validate_safe_header(mem@[512], mem@[513], mem@[514], mem@[515]);
+    code_len = mem@[513];
+    main_offset = mem@[514];
+
+    if (err == 0) [
+        if ((code_len + 32) > code_bytes_est) [
+            err = LIT_ERR_BAD_GEOMETRY;
+        ]
+    ]
+
+    if (err == 0) [
+        actual_hash = case_fnv1a_64(k_code_start, 32 + code_len);
+        if (actual_hash != expected_hash) [
+            err = LIT_ERR_BAD_HASH;
+        ]
+    ]
+
+    if (err == 0) [
+        code_words = (code_len + 7) >> 3;
+        loop (cw:32768 = 0 .. code_words) [
+            dst_w = 512 + cw;
+            src_w = 516 + cw;
+            mem@[dst_w] = mem@[src_w];
+        ]
+    ]
+
+    split_pages = 0;
+    if (err == 0) [
+        loop (sp:64 = 0 .. pages) [
+            cur_p = mem + (sp << 12);
+            s_res = paging_split_2mb!(cr3_base, cur_p, pmm);
+            if (s_res < 0) [
+                err = LIT_ERR_MMAP;
+            ]
+            if (s_res > 0) [
+                split_pages = split_pages + s_res;
+            ]
+        ]
+    ]
+
+    if (err != 0) [
+        loop (f:64 = 0 .. pages) [
+            pmm_free_page!(pmm, mem + (f << 12));
+        ]
+        ret err;
+    ]
+
+    thunk_base_word = (PAGE_SIZE - 448) >> 3;
+    emit_reverse_thunk_table!(mem, thunk_base_word, dispatch_fn, abort_slot);
+
+    paging_update_prot!(cr3_base, mem, pages, 1);
+
+    out_meta@[0] = k_code_start + main_offset;
+    out_meta@[1] = mem;
+    out_meta@[2] = pages;
+    out_meta@[3] = out_meta@[3] + split_pages;
+    ret LIT_EXIT_OK;
+]
+
+fn lit_map_safe_nvme!(arena, start_lba, sec_count, expected_hash, out_meta) [
+    if (sec_count == 0) [
+        ret LIT_ERR_SHORT_READ;
+    ]
+
+    nvme = arena@[ARENA_LENS_NVME];
+    pmm = arena@[ARENA_LENS_PMM];
+
+    code_bytes_est = sec_count << 9;
+    mem = lit_alloc_zero_pages!(pmm, code_bytes_est, out_meta);
+    if (mem == 0) [
+        ret LIT_ERR_MMAP;
+    ]
+    pages = out_meta@[2];
+    k_code_start = mem + PAGE_SIZE;
+
+    // 8-Sector (4 KB PRP) Chunk Read Loop
+    chunks = (sec_count + 7) >> 3;
+    err = 0;
+    loop (c:64 = 0 .. chunks) [
+        if (err == 0) [
+            cur_lba = start_lba + (c << 3);
+            rem = sec_count - (c << 3);
+            cur_secs = 8;
+            if (rem < 8) [
+                cur_secs = rem;
+            ]
+            dest = k_code_start + (c << 12);
+            r = nvme_rw_sectors!(nvme, 0, cur_lba, cur_secs, dest);
+            if (r != 0) [
+                err = LIT_ERR_SHORT_READ;
+            ]
+        ]
+    ]
+
+    if (err != 0) [
+        loop (f:64 = 0 .. pages) [
+            pmm_free_page!(pmm, mem + (f << 12));
+        ]
+        ret err;
+    ]
+
+    ret lit_finalize_safe!(arena, mem, pages, code_bytes_est, expected_hash, out_meta);
+]
+
+fn lit_map_safe_mem!(arena, src_buf, byte_len, expected_hash, out_meta) [
+    if (byte_len < 32) [
+        ret LIT_ERR_SHORT_READ;
+    ]
+
+    pmm = arena@[ARENA_LENS_PMM];
+    mem = lit_alloc_zero_pages!(pmm, byte_len, out_meta);
+    if (mem == 0) [
+        ret LIT_ERR_MMAP;
+    ]
+    pages = out_meta@[2];
+
+    copy_words = (byte_len + 7) >> 3;
+    loop (w:32768 = 0 .. copy_words) [
+        dst_idx = 512 + w;
+        mem@[dst_idx] = src_buf@[w];
+    ]
+
+    ret lit_finalize_safe!(arena, mem, pages, byte_len, expected_hash, out_meta);
+]

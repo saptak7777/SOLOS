@@ -1,0 +1,50 @@
+// ==========================================
+// shark/pure/math.sinc
+// SHARK Pure Mathematical & Bitwise Transformations
+// ==========================================
+
+fn ctz64(val) [
+    if (val == 0) [
+        ret 64;
+    ]
+    cnt = 0;
+    if ((val & 4294967295) == 0) [
+        cnt = 32;
+        val = val >> 32;
+    ]
+    if ((val & 65535) == 0) [
+        cnt = cnt + 16;
+        val = val >> 16;
+    ]
+    if ((val & 255) == 0) [
+        cnt = cnt + 8;
+        val = val >> 8;
+    ]
+    if ((val & 15) == 0) [
+        cnt = cnt + 4;
+        val = val >> 4;
+    ]
+    if ((val & 3) == 0) [
+        cnt = cnt + 2;
+        val = val >> 2;
+    ]
+    if ((val & 1) == 0) [
+        cnt = cnt + 1;
+    ]
+    ret cnt;
+]
+
+fn pack_pixel_pair_qword(row_byte, pair_idx, fg, bg) [
+    p2 = pair_idx << 1;
+    b0 = (row_byte >> (7 - p2)) & 1;
+    b1 = (row_byte >> (6 - p2)) & 1;
+    px0 = bg;
+    if (b0 != 0) [
+        px0 = fg;
+    ]
+    px1 = bg;
+    if (b1 != 0) [
+        px1 = fg;
+    ]
+    ret (px1 << 32) | (px0 & 4294967295);
+]

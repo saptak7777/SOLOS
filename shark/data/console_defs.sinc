@@ -1,0 +1,26 @@
+// ==========================================
+// shark/data/console_defs.sinc
+// Shared Framebuffer Console Lenses & BGRA8 Palette
+// ==========================================
+
+const CONSOLE_LENS_FB_BASE    = 0;
+const CONSOLE_LENS_BACKBUFFER = 1;
+const CONSOLE_LENS_FONT_PTR   = 2;
+const CONSOLE_LENS_WIDTH      = 3;
+const CONSOLE_LENS_HEIGHT     = 4;
+const CONSOLE_LENS_STRIDE     = 5;
+const CONSOLE_LENS_COL        = 6;
+const CONSOLE_LENS_ROW        = 7;
+const CONSOLE_LENS_MAX_COLS   = 8;
+const CONSOLE_LENS_MAX_ROWS   = 9;
+const CONSOLE_LENS_FG         = 10;
+const CONSOLE_LENS_BG         = 11;
+
+// Standard BGRA8 Colors
+const COLOR_BG                = 1780295;  // 0x001B2A47: Deep Slate Blue
+const COLOR_FG_WHITE          = 16777215; // 0x00FFFFFF: Pure White
+const COLOR_FG_CYAN           = 6401007;  // 0x0061AFEF: Soft Cyan
+const COLOR_FG_GOLD           = 15056027; // 0x00E5C07B: Gold / Hex
+const COLOR_FG_GREEN          = 10011513; // 0x0098C379: Emerald Green
+const COLOR_DIVIDER           = 4080722;  // 0x003E4452: Divider Gray
+

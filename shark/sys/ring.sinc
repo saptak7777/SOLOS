@@ -1,0 +1,38 @@
+// ==========================================
+// shark/sys/ring.sinc
+// Lock-Free SPSC Keyboard Ring Buffer
+// ==========================================
+
+fn ring_init!(ring_ptr) [
+    ring_ptr@[RING_LENS_HEAD] = 0;
+    ring_ptr@[RING_LENS_TAIL] = 0;
+    ring_ptr@[2] = 0;
+    ring_ptr@[RING_LENS_DROPPED] = 0;
+    ret 0;
+]
+
+fn ring_push!(ring_ptr, val) [
+    head = ring_ptr@[RING_LENS_HEAD];
+    tail = ring_ptr@[RING_LENS_TAIL];
+    next_head = (head + 1) & 255;
+    if (next_head == tail) [
+        ring_ptr@[RING_LENS_DROPPED] = ring_ptr@[RING_LENS_DROPPED] + 1;
+        ret -1;
+    ]
+    slot_idx = RING_DATA_BASE + head;
+    ring_ptr@[slot_idx] = val;
+    ring_ptr@[RING_LENS_HEAD] = next_head;
+    ret 0;
+]
+
+fn ring_pop!(ring_ptr) [
+    head = ring_ptr@[RING_LENS_HEAD];
+    tail = ring_ptr@[RING_LENS_TAIL];
+    if (head == tail) [
+        ret -1;
+    ]
+    slot_idx = RING_DATA_BASE + tail;
+    val = ring_ptr@[slot_idx];
+    ring_ptr@[RING_LENS_TAIL] = (tail + 1) & 255;
+    ret val;
+]

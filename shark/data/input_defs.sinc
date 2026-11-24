@@ -1,0 +1,28 @@
+// ==========================================
+// shark/data/input_defs.sinc
+// SHARK Hardware Interrupt & Input Constants
+// ==========================================
+
+// 8259 PIC Ports
+const PIC1_COMMAND = 32;  // 0x20
+const PIC1_DATA    = 33;  // 0x21
+const PIC2_COMMAND = 160; // 0xA0
+const PIC2_DATA    = 161; // 0xA1
+
+// 8254 PIT Ports
+const PIT_CHANNEL0 = 64;  // 0x40
+const PIT_COMMAND  = 67;  // 0x43
+
+// PS/2 8042 Ports
+const PS2_DATA     = 96;  // 0x60
+const PS2_STATUS   = 100; // 0x64
+
+// Pinned BSS Offsets (ram_tape - 49216)
+const TIMER_BSS_OFFSET = 26240;
+const RING_BSS_OFFSET  = 26368;
+
+// Lock-Free SPSC Ring Buffer Lenses
+const RING_LENS_HEAD    = 0;
+const RING_LENS_TAIL    = 1;
+const RING_LENS_DROPPED = 3;
+const RING_DATA_BASE    = 4;

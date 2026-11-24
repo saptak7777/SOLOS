@@ -1,0 +1,48 @@
+// ==========================================
+// shark/sys/cap.sinc
+// SHARK EROS Capability & SIP Management (Strict Law 15)
+// ==========================================
+
+fn cap_init_table!(table_base, live_mask_ptr) [
+    loop (s:64 = 0 .. MAX_CAP_SLOTS) [
+        table_base@[s] = 0;
+    ]
+    live_mask_ptr@[0] = 0;
+    ret 0;
+]
+
+fn cap_sip_alloc!(live_mask_ptr) [
+    mask = live_mask_ptr@[0];
+    inv = -1 ^ mask;
+    if (inv == 0) [
+        ret -1;
+    ]
+    sip_id = ctz64(inv);
+    live_mask_ptr@[0] = mask | (1 << sip_id);
+    ret sip_id;
+]
+
+fn cap_sip_free!(live_mask_ptr, sip_id) [
+    if (!(sip_id < 64)) [
+        ret 1;
+    ]
+    mask = live_mask_ptr@[0];
+    live_mask_ptr@[0] = mask & (-1 ^ (1 << sip_id));
+    ret 0;
+]
+
+fn cap_mint!(table_base, slot_idx, sip_id) [
+    if (!(slot_idx < MAX_CAP_SLOTS)) [
+        ret 0;
+    ]
+    ret cap_pack_token(sip_id, table_base@[slot_idx] & 65535, slot_idx);
+]
+
+fn cap_revoke!(table_base, slot_idx) [
+    if (!(slot_idx < MAX_CAP_SLOTS)) [
+        ret 1;
+    ]
+    table_base@[slot_idx] = (table_base@[slot_idx] + 1) & 65535;
+    ret 0;
+]
+

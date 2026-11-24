@@ -1,0 +1,25 @@
+// ==========================================
+// lit/sys/thunks.sinc
+// LIT Bare-Metal Reverse Thunk Generator (Strict Law 15)
+// ==========================================
+
+fn emit_reverse_thunk_table!(buf, base_word, dispatch_fn, abort_slot) [
+    loop (t_idx:56 = 0 .. 56) [
+        buf@[(base_word + t_idx)] = -8029759185026510704;
+    ]
+
+    // Thunk 1: exocall! (offset -32, Words base_word + 52..53)
+    buf@[(base_word + 52)] = (dispatch_fn << 16) | 47176;
+    buf@[(base_word + 53)] = ((dispatch_fn >> 48) & 65535) | (-8029759183677095936);
+
+    // Thunk 2: cell_try_mark! (offset -64, Words base_word + 48..49)
+    buf@[(base_word + 48)] = (abort_slot << 16) | 47945;
+    buf@[(base_word + 49)] = ((abort_slot >> 48) & 65535) | (-8029703543847321600);
+
+    // Thunk 3: cell_abort! (offset -96, Words base_word + 44..46)
+    buf@[(base_word + 44)] = ((abort_slot & 16777215) << 40) | 804396763464;
+    buf@[(base_word + 45)] = ((abort_slot >> 24) & 1099511627775) | 2561221077439086592;
+    buf@[(base_word + 46)] = -8029759185026497699;
+
+    ret 0;
+]

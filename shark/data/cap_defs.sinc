@@ -1,0 +1,8 @@
+// ==========================================
+// shark/data/cap_defs.sinc
+// EROS 64-Bit Epoch Capability Constants
+// ==========================================
+
+const MAX_CAP_SLOTS        = 64;
+const CAP_TABLE_BSS_OFFSET = 25600;
+const LIVE_SIP_BSS_OFFSET  = 26112;

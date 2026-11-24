@@ -1,0 +1,31 @@
+# Build & Bytecode Artifacts
+*.safe
+*.elf
+*.o
+*.bin
+*.efi
+*.img
+*.iso
+
+# Release Bootstrap Toolchain Binaries
+!bin/
+!bin/sinc.elf
+!bin/staff
+!bin/packager_bin
+!bin/packager_o
+!bin/slim.elf
+
+# 3 Primary Workspace Folders
+scratch/
+build/
+.cache/
+docs/
+
+# OS & Editor Artifacts
+.DS_Store
+*~
+*.swp
+*.swo
+.vscode/
+.kilo/
+

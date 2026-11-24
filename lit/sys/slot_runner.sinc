@@ -1,0 +1,135 @@
+// ==========================================
+// lit/sys/slot_runner.sinc
+// LIT Bare-Metal Resident Slot Lifecycle & Hot-Swapping (Strict Law 15)
+// ==========================================
+
+fn lit_slot_load!(arena, slot_id, lba, sec_count, hash_val) [
+    if ((slot_id < 0) | (!(slot_id < LIT_MAX_SLOTS))) [
+        ret LIT_ERR_SLOT_BOUNDS;
+    ]
+
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    off = slot_id << 2;
+    entry = table@[off];
+    if (entry != 0) [
+        ret LIT_ERR_SLOT_FULL;
+    ]
+
+    meta_buf = arena@[ARENA_LENS_META_BUF];
+
+    err = lit_map_safe_nvme!(arena, lba, sec_count, hash_val, meta_buf);
+    if (err != LIT_EXIT_OK) [
+        ret err;
+    ]
+
+    table@[(off + SLOT_BASE)] = meta_buf@[1];
+    table@[(off + SLOT_PAGES)] = meta_buf@[2];
+    table@[(off + SLOT_HASH)] = hash_val;
+    table@[off] = meta_buf@[0];
+    ret LIT_EXIT_OK;
+]
+
+fn lit_slot_load_mem!(arena, slot_id, src_buf, byte_len, hash_val) [
+    if ((slot_id < 0) | (!(slot_id < LIT_MAX_SLOTS))) [
+        ret LIT_ERR_SLOT_BOUNDS;
+    ]
+
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    off = slot_id << 2;
+    entry = table@[off];
+    if (entry != 0) [
+        ret LIT_ERR_SLOT_FULL;
+    ]
+
+    meta_buf = arena@[ARENA_LENS_META_BUF];
+
+    err = lit_map_safe_mem!(arena, src_buf, byte_len, hash_val, meta_buf);
+    if (err != LIT_EXIT_OK) [
+        ret err;
+    ]
+
+    table@[(off + SLOT_BASE)] = meta_buf@[1];
+    table@[(off + SLOT_PAGES)] = meta_buf@[2];
+    table@[(off + SLOT_HASH)] = hash_val;
+    table@[off] = meta_buf@[0];
+    ret LIT_EXIT_OK;
+]
+
+fn lit_slot_call!(arena, slot_id, arg) [
+    if ((slot_id < 0) | (!(slot_id < LIT_MAX_SLOTS))) [
+        ret LIT_ERR_SLOT_BOUNDS;
+    ]
+
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    off = slot_id << 2;
+    entry = table@[off];
+    if (entry == 0) [
+        ret LIT_ERR_SLOT_EMPTY;
+    ]
+
+    ret exec_safe_cell!(entry, arg);
+]
+
+fn lit_free_slot_mem!(pmm, cr3_base, base, pages) [
+    if (base != 0) [
+        paging_update_prot!(cr3_base, base, pages, 0);
+        loop (f:64 = 0 .. pages) [
+            pmm_free_page!(pmm, base + (f << 12));
+        ]
+    ]
+    ret 0;
+]
+
+fn lit_slot_hotswap!(arena, slot_id, new_lba, new_secs, new_hash) [
+    if ((slot_id < 0) | (!(slot_id < LIT_MAX_SLOTS))) [
+        ret LIT_ERR_SLOT_BOUNDS;
+    ]
+
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    off = slot_id << 2;
+    entry = table@[off];
+    if (entry == 0) [
+        ret LIT_ERR_SLOT_EMPTY;
+    ]
+
+    meta_buf = arena@[ARENA_LENS_META_BUF];
+
+    err = lit_map_safe_nvme!(arena, new_lba, new_secs, new_hash, meta_buf);
+    if (err != LIT_EXIT_OK) [
+        ret err;
+    ]
+
+    old_base = table@[(off + SLOT_BASE)];
+    old_pages = table@[(off + SLOT_PAGES)];
+
+    table@[(off + SLOT_BASE)] = meta_buf@[1];
+    table@[(off + SLOT_PAGES)] = meta_buf@[2];
+    table@[(off + SLOT_HASH)] = new_hash;
+    table@[off] = meta_buf@[0];
+
+    pmm = arena@[ARENA_LENS_PMM];
+    cr3_base = arena@[ARENA_LENS_CR3];
+    lit_free_slot_mem!(pmm, cr3_base, old_base, old_pages);
+    ret LIT_EXIT_OK;
+]
+
+fn lit_slot_unload!(arena, slot_id) [
+    if ((slot_id < 0) | (!(slot_id < LIT_MAX_SLOTS))) [
+        ret LIT_ERR_SLOT_BOUNDS;
+    ]
+
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    off = slot_id << 2;
+    old_base = table@[(off + SLOT_BASE)];
+    old_pages = table@[(off + SLOT_PAGES)];
+
+    table@[off] = 0;
+    table@[(off + SLOT_BASE)] = 0;
+    table@[(off + SLOT_PAGES)] = 0;
+    table@[(off + SLOT_HASH)] = 0;
+
+    pmm = arena@[ARENA_LENS_PMM];
+    cr3_base = arena@[ARENA_LENS_CR3];
+    lit_free_slot_mem!(pmm, cr3_base, old_base, old_pages);
+    ret LIT_EXIT_OK;
+]

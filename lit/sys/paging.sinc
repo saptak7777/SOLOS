@@ -1,0 +1,61 @@
+// ==========================================
+// lit/sys/paging.sinc
+// LIT Bare-Metal Ring 0 Paging & W^X Sealing (Strict Law 15)
+// ==========================================
+
+fn paging_get_cr3_base!() [
+    cr3 = cpu_get_cr3!();
+    ret cr3 & 4503599627366400;
+]
+
+fn paging_split_2mb!(cr3_base, va, pmm) [
+    pml4_idx = (va >> 39) & 511;
+    pdpt_base = cr3_base@[pml4_idx] & 4503599627366400;
+    pdpt_idx = (va >> 30) & 511;
+    pd_base = pdpt_base@[pdpt_idx] & 4503599627366400;
+    pd_idx = (va >> 21) & 511;
+    pd_entry = pd_base@[pd_idx];
+
+    if ((pd_entry & 128) == 0) [
+        ret 0;
+    ]
+
+    pt_page = pmm_alloc_page!(pmm);
+    if (pt_page == 0) [
+        ret -1;
+    ]
+
+    base_2mb = pd_entry & 4503599625269248;
+    loop (k:512 = 0 .. 512) [
+        pt_page@[k] = base_2mb + (k << 12) | 7;
+    ]
+
+    cpu_write_cr0_wp!(0);
+    pd_base@[pd_idx] = pt_page | 7;
+    cpu_write_cr0_wp!(1);
+    ret 1;
+]
+
+fn paging_update_prot!(cr3_base, va, pages, is_seal) [
+    cpu_write_cr0_wp!(0);
+    loop (p:64 = 0 .. pages) [
+        cur_va = va + (p << 12);
+        pml4_idx = (cur_va >> 39) & 511;
+        pdpt_base = cr3_base@[pml4_idx] & 4503599627366400;
+        pdpt_idx = (cur_va >> 30) & 511;
+        pd_base = pdpt_base@[pdpt_idx] & 4503599627366400;
+        pd_idx = (cur_va >> 21) & 511;
+        pt_base = pd_base@[pd_idx] & 4503599627366400;
+        pt_idx = (cur_va >> 12) & 511;
+        pte = pt_base@[pt_idx];
+        if (is_seal != 0) [
+            pt_base@[pt_idx] = pte & (-3) & 9223372036854775807;
+        ]
+        if (is_seal == 0) [
+            pt_base@[pt_idx] = pte | 2;
+        ]
+        cpu_invlpg!(cur_va);
+    ]
+    cpu_write_cr0_wp!(1);
+    ret 0;
+]

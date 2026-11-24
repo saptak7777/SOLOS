@@ -1,0 +1,43 @@
+// ==========================================
+// case/pure/case.sinc
+// Canonical Pure CASE Lookup, Metadata Unpack & FNV-1a Integrity (Strict Law 15)
+// ==========================================
+
+fn case_fnv1a_64(buf, byte_len) [
+    h = CASE_FNV_OFFSET;
+    loop (i:10000000 = 0 .. byte_len) [
+        h = (h ^ buf@[i * 1]) * CASE_FNV_PRIME;
+    ]
+    ret h;
+]
+
+fn case_entry_type(meta) [
+    ret meta & 255;
+]
+
+fn case_entry_epoch(meta) [
+    ret (meta >> 16) & 65535;
+]
+
+fn case_entry_pages(meta) [
+    ret (meta >> 32) & 4294967295;
+]
+
+fn case_lookup(table_buf, name_0, name_1) [
+    match_idx = -1;
+    loop (i:64 = 0 .. CASE_MAX_ENTRIES) [
+        if (match_idx == -1) [
+            base = i << 3;
+            meta = table_buf@[(base + CASE_LENS_META)];
+            if (case_entry_type(meta) != CASE_TYPE_FREE) [
+                n0 = table_buf@[(base + CASE_LENS_NAME_0)];
+                n1 = table_buf@[(base + CASE_LENS_NAME_1)];
+                if ((n0 == name_0) & (n1 == name_1)) [
+                    match_idx = i;
+                ]
+            ]
+        ]
+    ]
+    ret match_idx;
+]
+

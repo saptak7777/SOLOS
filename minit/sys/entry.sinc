@@ -1,0 +1,88 @@
+// ==========================================
+// minit/sys/entry.sinc
+// Sovereign Service Supervisor Entry Point (Strict Law 15)
+// ==========================================
+
+fn main!(arena) [
+    if (arena == 0) [
+        ret 1;
+    ]
+
+    svc_table = arena@[ARENA_LENS_META_BUF] + 2048;
+    loop (cl:256 = 0 .. 256) [
+        svc_table@[cl] = 0;
+    ]
+
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, FILE_SELFTEST_SAFE_0, FILE_SELFTEST_SAFE_1, ext_buf) != 0) [
+        ret 10;
+    ]
+    if (case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_SAFE) [
+        ret 10;
+    ]
+    lba_self  = ext_buf@[CASE_EXT_PG] << 3;
+    secs_self = ext_buf@[CASE_EXT_PAGES] << 3;
+    hash_self = ext_buf@[CASE_EXT_HASH];
+
+    if (case_find_artifact!(arena, FILE_LIT_SHELL_SAFE_0, FILE_LIT_SHELL_SAFE_1, ext_buf) != 0) [
+        ret 11;
+    ]
+    if (case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_SAFE) [
+        ret 11;
+    ]
+    lba_shell  = ext_buf@[CASE_EXT_PG] << 3;
+    secs_shell = ext_buf@[CASE_EXT_PAGES] << 3;
+    hash_shell = ext_buf@[CASE_EXT_HASH];
+
+    base_1 = 1 << 2;
+    svc_table@[(base_1 + SVC_LENS_DEPS)]   = 0;
+    svc_table@[(base_1 + SVC_LENS_EXTENT)] = (lba_self << 32) | secs_self;
+    svc_table@[(base_1 + SVC_LENS_META)]   = SVC_POLICY_ONESHOT;
+    svc_table@[(base_1 + SVC_LENS_TOKEN)]  = hash_self;
+
+    base_2 = 2 << 2;
+    svc_table@[(base_2 + SVC_LENS_DEPS)]   = 1 << 1;
+    svc_table@[(base_2 + SVC_LENS_EXTENT)] = (lba_shell << 32) | secs_shell;
+    svc_table@[(base_2 + SVC_LENS_META)]   = SVC_POLICY_CRITICAL;
+    svc_table@[(base_2 + SVC_LENS_TOKEN)]  = hash_shell;
+
+    wanted_mask = (1 << 1) | (1 << 2);
+    ready_mask = 0;
+
+    loop (step:64 = 0 .. 64) [
+        if (ready_mask == wanted_mask) [
+            exocall!(arena, EXOCALL_SLOT_UNLOAD, 2, 0, 0, 0);
+            ret MINIT_PASS_CODE;
+        ]
+
+        s = dag_pick_next_runnable(svc_table, wanted_mask, ready_mask);
+        if (s < 0) [
+            ret 3;
+        ]
+
+        base = s << 2;
+        ext = svc_table@[(base + SVC_LENS_EXTENT)];
+        lba = (ext >> 32) & 4294967295;
+        secs = ext & 4294967295;
+        hash_val = svc_table@[(base + SVC_LENS_TOKEN)];
+        policy = svc_table@[(base + SVC_LENS_META)];
+
+        r_load = exocall!(arena, EXOCALL_SLOT_LOAD, s, lba, secs, hash_val);
+        if (r_load != LIT_EXIT_OK) [
+            ret 4;
+        ]
+
+        res = exocall!(arena, EXOCALL_SLOT_CALL, s, arena, 0, 0);
+        if (res != 0) [
+            ret 5;
+        ]
+
+        if (policy == SVC_POLICY_ONESHOT) [
+            exocall!(arena, EXOCALL_SLOT_UNLOAD, s, 0, 0, 0);
+        ]
+
+        ready_mask = ready_mask | (1 << s);
+    ]
+
+    ret 7;
+]

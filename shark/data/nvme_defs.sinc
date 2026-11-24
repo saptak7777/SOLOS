@@ -1,0 +1,40 @@
+// ==========================================
+// shark/data/nvme_defs.sinc
+// NVMe Controller Registers, Opcodes and 10-QWORD Lens
+// ==========================================
+
+// NVMe Driver State Lens (10 QWORDs at bss_base + 25216)
+const NVME_LENS_BAR          = 0; // QWORD 0: Physical MMIO Base Address
+const NVME_LENS_DSTRD_SHIFT  = 1; // QWORD 1: Doorbell stride bitshift (2 + DSTRD)
+const NVME_LENS_ADMIN_SQ     = 2; // QWORD 2: Admin SQ base physical address
+const NVME_LENS_ADMIN_CQ     = 3; // QWORD 3: Admin CQ base physical address
+const NVME_LENS_IO_SQ        = 4; // QWORD 4: I/O SQ base physical address
+const NVME_LENS_IO_CQ        = 5; // QWORD 5: I/O CQ base physical address
+const NVME_LENS_IO_SQ_TAIL   = 6; // QWORD 6: I/O SQ tail index (0..63)
+const NVME_LENS_IO_CQ_HEAD   = 7; // QWORD 7: I/O CQ head index (0..63)
+const NVME_LENS_IO_PHASE     = 8; // QWORD 8: Expected I/O CQ Phase Tag (1 or 0)
+const NVME_LENS_CID_COUNTER  = 9; // QWORD 9: Monotonic Command Identifier
+
+// 64-bit MMIO Registers (direct access via ptr@[off >> 3])
+const NVME_REG_CAP_QW       = 0;    // 0x00: CAP (QWORD index 0)
+const NVME_REG_ASQ_QW       = 5;    // 0x28: ASQ (QWORD index 5)
+const NVME_REG_ACQ_QW       = 6;    // 0x30: ACQ (QWORD index 6)
+
+// 32-bit MMIO Byte Offsets (accessed via mmio_read32! / mmio_write32!)
+const NVME_OFF_CC           = 20;   // 0x14: Controller Configuration
+const NVME_OFF_CSTS         = 28;   // 0x1C: Controller Status
+const NVME_OFF_AQA          = 36;   // 0x24: Admin Queue Attributes
+const NVME_DOORBELL_BASE    = 4096; // 0x1000: Doorbell array base
+
+// NVMe Opcodes
+const NVME_OP_ADMIN_CREATE_IO_CQ = 5; // 0x05
+const NVME_OP_ADMIN_CREATE_IO_SQ = 1; // 0x01
+const NVME_OP_NVM_WRITE          = 1; // 0x01
+const NVME_OP_NVM_READ           = 2; // 0x02
+
+// NVMe Error Codes
+const ERR_NVME_TIMEOUT      = 50;
+const ERR_NVME_OOM          = 51;
+const ERR_NVME_CMD_FAIL     = 52;
+const ERR_NVME_VERIFY       = 53;
+

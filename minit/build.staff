@@ -1,0 +1,25 @@
+// ==========================================
+// minit/build.staff
+// MINIT Sovereign Service Supervisor Manifest
+// ==========================================
+
+artifact minit [
+    target = x86_64_none;
+    type   = bin;
+]
+
+deps [
+    spine/data/abi_defs.sinc;
+    lit/data/lit_defs.sinc;
+    case/data/case_defs.sinc;
+    case/pure/case.sinc;
+    case/pure/case_alloc.sinc;
+    case/sys/case_io.sinc;
+    shark/pure/math.sinc;
+]
+
+flags [
+    optimize = 3;
+    heap     = 1000000000;
+]
+

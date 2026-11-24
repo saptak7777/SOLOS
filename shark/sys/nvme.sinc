@@ -1,0 +1,252 @@
+// ==========================================
+// shark/sys/nvme.sinc
+// SHARK Bare-Metal NVMe Driver (Strict Law 15)
+// ==========================================
+
+fn nvme_ring_doorbell!(nvme, qid, is_cq, val) [
+    bar = nvme@[NVME_LENS_BAR];
+    shift = nvme@[NVME_LENS_DSTRD_SHIFT];
+    db_idx = (qid << 1) + is_cq;
+    db_addr = bar + NVME_DOORBELL_BASE + (db_idx << shift);
+    mmio_write32!(db_addr, val);
+    ret 0;
+]
+
+fn nvme_init!(storage_bar, pmm) [
+    if (storage_bar == 0) [
+        ret 0;
+    ]
+
+    bss_base = pmm - 24832;
+    nvme = bss_base + 25216;
+
+    cap = storage_bar@[NVME_REG_CAP_QW];
+    dstrd = (cap >> 32) & 15;
+    nvme@[NVME_LENS_BAR] = storage_bar;
+    nvme@[NVME_LENS_DSTRD_SHIFT] = 2 + dstrd;
+
+    // 1. Disable controller if enabled by UEFI/OVMF
+    csts = mmio_read32!(storage_bar + NVME_OFF_CSTS);
+    if ((csts & 1) != 0) [
+        mmio_write32!(storage_bar + NVME_OFF_CC, 0);
+        disabled = 0;
+        loop (w:100000 = 0 .. 100000) [
+            if (disabled == 0) [
+                csts_poll = mmio_read32!(storage_bar + NVME_OFF_CSTS);
+                if ((csts_poll & 1) == 0) [
+                    disabled = 1;
+                ]
+            ]
+        ]
+        if (disabled == 0) [
+            io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
+            ret 0;
+        ]
+    ]
+
+    // 2. Allocate and zero 4KB physical pages for Admin SQ and CQ
+    asq = pmm_alloc_page!(pmm);
+    acq = pmm_alloc_page!(pmm);
+    if ((asq == 0) | (acq == 0)) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_OOM);
+        ret 0;
+    ]
+    loop (w1:512 = 0 .. 512) [
+        asq@[w1] = 0;
+        acq@[w1] = 0;
+    ]
+
+    nvme@[NVME_LENS_ADMIN_SQ] = asq;
+    nvme@[NVME_LENS_ADMIN_CQ] = acq;
+    nvme@[NVME_LENS_CID_COUNTER] = 1;
+
+    // 3. Program AQA (ASQS = 63, ACQS = 63 -> 64 entries each)
+    aqa = (63 << 16) | 63;
+    mmio_write32!(storage_bar + NVME_OFF_AQA, aqa);
+
+    // 4. Program ASQ and ACQ 64-bit base registers
+    storage_bar@[NVME_REG_ASQ_QW] = asq;
+    storage_bar@[NVME_REG_ACQ_QW] = acq;
+
+    // 5. Program CC: EN=1, IOSQES=6 (64B), IOCQES=4 (16B) -> 0x00460001 (4587521)
+    cc_val = 1 | (6 << 16) | (4 << 20);
+    mmio_write32!(storage_bar + NVME_OFF_CC, cc_val);
+
+    // 6. Poll CSTS.RDY == 1
+    enabled = 0;
+    loop (p:100000 = 0 .. 100000) [
+        if (enabled == 0) [
+            csts_ready = mmio_read32!(storage_bar + NVME_OFF_CSTS);
+            if ((csts_ready & 1) != 0) [
+                enabled = 1;
+            ]
+        ]
+    ]
+    if (enabled == 0) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
+        ret 0;
+    ]
+
+    ret nvme;
+]
+
+fn nvme_create_io_queues!(nvme, pmm) [
+    iosq = pmm_alloc_page!(pmm);
+    iocq = pmm_alloc_page!(pmm);
+    if ((iosq == 0) | (iocq == 0)) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_OOM);
+        ret 1;
+    ]
+    loop (w1:512 = 0 .. 512) [
+        iosq@[w1] = 0;
+        iocq@[w1] = 0;
+    ]
+
+    nvme@[NVME_LENS_IO_SQ] = iosq;
+    nvme@[NVME_LENS_IO_CQ] = iocq;
+    nvme@[NVME_LENS_IO_SQ_TAIL] = 0;
+    nvme@[NVME_LENS_IO_CQ_HEAD] = 0;
+    nvme@[NVME_LENS_IO_PHASE] = 1;
+
+    // 1. Submit Admin Create I/O CQ (Opcode 5)
+    asq = nvme@[NVME_LENS_ADMIN_SQ];
+    cid1 = nvme@[NVME_LENS_CID_COUNTER];
+    nvme@[NVME_LENS_CID_COUNTER] = cid1 + 1;
+
+    // 64-byte SQE at entry 0
+    asq@[0] = NVME_OP_ADMIN_CREATE_IO_CQ | (cid1 << 16);
+    asq@[1] = 0;
+    asq@[2] = 0;
+    asq@[3] = iocq; // PRP1
+    asq@[4] = 0;    // PRP2
+    asq@[5] = ((63 << 16) | 1) | (1 << 32); // CDW10: QSIZE=63, QID=1; CDW11: PC=1
+    asq@[6] = 0;
+    asq@[7] = 0;
+
+    nvme_ring_doorbell!(nvme, 0, 0, 1);
+
+    // Poll Admin CQ for completion
+    acq = nvme@[NVME_LENS_ADMIN_CQ];
+    cq_done = 0;
+    loop (p1:100000 = 0 .. 100000) [
+        if (cq_done == 0) [
+            cqe_dw3 = acq@[1]; // Entry 0: QWORD 1 (DW2 | (DW3 << 32))
+            phase = (cqe_dw3 >> 48) & 1;
+            if (phase == 1) [
+                status = (cqe_dw3 >> 49) & 32767;
+                if (status != 0) [
+                    io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
+                    ret 1;
+                ]
+                nvme_ring_doorbell!(nvme, 0, 1, 1);
+                cq_done = 1;
+            ]
+        ]
+    ]
+    if (cq_done == 0) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
+        ret 1;
+    ]
+
+    // 2. Submit Admin Create I/O SQ (Opcode 1)
+    cid2 = nvme@[NVME_LENS_CID_COUNTER];
+    nvme@[NVME_LENS_CID_COUNTER] = cid2 + 1;
+
+    // 64-byte SQE at entry 1
+    asq@[8] = NVME_OP_ADMIN_CREATE_IO_SQ | (cid2 << 16);
+    asq@[9] = 0;
+    asq@[10] = 0;
+    asq@[11] = iosq; // PRP1
+    asq@[12] = 0;    // PRP2
+    asq@[13] = ((63 << 16) | 1) | (((1 << 16) | 1) << 32); // CDW10: QSIZE=63, QID=1; CDW11: CQID=1, PC=1
+    asq@[14] = 0;
+    asq@[15] = 0;
+
+    nvme_ring_doorbell!(nvme, 0, 0, 2);
+
+    sq_done = 0;
+    loop (p2:100000 = 0 .. 100000) [
+        if (sq_done == 0) [
+            cqe2_dw3 = acq@[3]; // Entry 1: QWORD 3
+            phase2 = (cqe2_dw3 >> 48) & 1;
+            if (phase2 == 1) [
+                status2 = (cqe2_dw3 >> 49) & 32767;
+                if (status2 != 0) [
+                    io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
+                    ret 1;
+                ]
+                nvme_ring_doorbell!(nvme, 0, 1, 2);
+                sq_done = 1;
+            ]
+        ]
+    ]
+    if (sq_done == 0) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
+        ret 1;
+    ]
+
+    ret 0;
+]
+
+fn nvme_rw_sectors!(nvme, is_write, lba, count, buf) [
+    if ((count == 0) | (count > 8) | ((buf & 4095) != 0)) [
+        ret 1;
+    ]
+
+    iosq = nvme@[NVME_LENS_IO_SQ];
+    tail = nvme@[NVME_LENS_IO_SQ_TAIL];
+    cid = nvme@[NVME_LENS_CID_COUNTER];
+    nvme@[NVME_LENS_CID_COUNTER] = cid + 1;
+
+    op = NVME_OP_NVM_READ;
+    if (is_write != 0) [
+        op = NVME_OP_NVM_WRITE;
+    ]
+
+    sqe_base = iosq + (tail << 6);
+    sqe_base@[0] = op | (cid << 16) | (1 << 32); // CDW0, NSID=1
+    sqe_base@[1] = 0;
+    sqe_base@[2] = 0;
+    sqe_base@[3] = buf; // PRP1
+    sqe_base@[4] = 0;   // PRP2
+    sqe_base@[5] = lba; // CDW10 & CDW11: 64-bit LBA
+    sqe_base@[6] = count - 1; // CDW12: NLB
+    sqe_base@[7] = 0;
+
+    new_tail = (tail + 1) & 63;
+    nvme@[NVME_LENS_IO_SQ_TAIL] = new_tail;
+    nvme_ring_doorbell!(nvme, 1, 0, new_tail);
+
+    iocq = nvme@[NVME_LENS_IO_CQ];
+    head = nvme@[NVME_LENS_IO_CQ_HEAD];
+    exp_phase = nvme@[NVME_LENS_IO_PHASE];
+    cqe_off = (head << 1) + 1;
+
+    rw_done = 0;
+    loop (p:1000000 = 0 .. 1000000) [
+        if (rw_done == 0) [
+            dw3 = iocq@[cqe_off];
+            phase = (dw3 >> 48) & 1;
+            if (phase == exp_phase) [
+                status = (dw3 >> 49) & 32767;
+                if (status != 0) [
+                    io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
+                    ret 4;
+                ]
+                new_head = (head + 1) & 63;
+                if (new_head == 0) [
+                    nvme@[NVME_LENS_IO_PHASE] = 1 ^ exp_phase;
+                ]
+                nvme@[NVME_LENS_IO_CQ_HEAD] = new_head;
+                nvme_ring_doorbell!(nvme, 1, 1, new_head);
+                rw_done = 1;
+            ]
+        ]
+    ]
+    if (rw_done == 0) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
+        ret 5;
+    ]
+
+    ret 0;
+]

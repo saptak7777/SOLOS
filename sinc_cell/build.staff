@@ -1,0 +1,37 @@
+// ==========================================
+// sinc_cell/build.staff
+// Bare-Metal SINC Live-on-Time Compiler Cell Manifest
+// ==========================================
+
+artifact sinc_cell [
+    target = x86_64_none;
+    type   = bin;
+]
+
+deps [
+    steel/sys/arena.sinc;
+    steel/data/slice.sinc;
+    steel/pure/hash.sinc;
+    steel/pure/sym_table.sinc;
+    sinc/data/lexer.sinc;
+    sinc/data/parser_ir.sinc;
+    sinc/data/tape_ops.sinc;
+    sinc/pure/parser_bindings.sinc;
+    sinc/pure/parser_pratt.sinc;
+    sinc/pure/simplify.sinc;
+    sinc/pure/dce.sinc;
+    sinc/pure/erls.sinc;
+    sinc/pure/inline.sinc;
+    sinc/pure/loops.sinc;
+    sinc/pure/vectorizer.sinc;
+    sinc/pure/unroll.sinc;
+    sinc/pure/allocator.sinc;
+    sinc/pure/x86_64.sinc;
+    sinc/sys/parser.sinc;
+    sinc/sys/entry.sinc;
+]
+
+flags [
+    optimize = 3;
+    heap     = 1000000000;
+]

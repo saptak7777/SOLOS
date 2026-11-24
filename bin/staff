@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# =============================================================================
+# bin/staff: SINC STAFF Linux Host Compatibility Adapter
+# External wrapper relying on Bash, tar, find, sed to translate .staff projects
+# into a temporary .trg mirror workspace, then invokes the native bin/staff.elf core.
+# Direct .staff.trg inputs bypass translation and execute directly on bin/staff.elf.
+# =============================================================================
+set -euo pipefail
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+DEFAULT_STAFF_ELF="$ROOT_DIR/bin/staff.elf"
+STAFF_ELF="${STAFF_BIN:-$DEFAULT_STAFF_ELF}"
+TRG_ENCODE="$ROOT_DIR/bin/trg_encode"
+
+if [ "$#" -lt 2 ]; then
+    echo "Usage: bin/staff <manifest.staff|manifest.staff.trg> <out.safe>" >&2
+    exit 1
+fi
+
+IN_MANIFEST="$1"
+OUT_SAFE="$2"
+
+if [ ! -f "$IN_MANIFEST" ]; then
+    echo "Error: Manifest file not found: $IN_MANIFEST" >&2
+    exit 2
+fi
+
+OUT_DIR=$(cd "$(dirname "$OUT_SAFE")" && pwd)
+OUT_SAFE_ABS="$OUT_DIR/$(basename "$OUT_SAFE")"
+
+if [[ "$IN_MANIFEST" == *.staff.trg ]]; then
+    exec "$STAFF_ELF" "$IN_MANIFEST" "$OUT_SAFE_ABS"
+fi
+
+# Multi-file .staff project: Mirror current directory into temp workspace,
+# encode all .sinc to .trg, encode manifest to .staff.trg, and invoke staff.elf
+TMP_MIRROR=$(mktemp -d "${TMPDIR:-/tmp}/staff_mirror_XXXXXX")
+trap 'rm -rf "$TMP_MIRROR"' EXIT
+
+# Fast archive-based clone excluding VCS, build caches, and binaries
+tar -cf - --exclude='.git' --exclude='scratch' --exclude='bin' --exclude='context' . | (cd "$TMP_MIRROR" && tar -xf -)
+
+if [[ "$IN_MANIFEST" = /* ]]; then
+    if [[ "$IN_MANIFEST" == "$PWD/"* ]]; then
+        REL_MANIFEST="${IN_MANIFEST#$PWD/}"
+    else
+        REL_MANIFEST=$(python3 -c "import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$IN_MANIFEST" "$PWD")
+    fi
+else
+    REL_MANIFEST="$IN_MANIFEST"
+fi
+
+(
+    cd "$TMP_MIRROR"
+
+    # Encode all .sinc files to .trg and remove .sinc sources
+    while IFS= read -r -d '' f; do
+        "$TRG_ENCODE" "$f" "${f%.sinc}.trg"
+        rm -f "$f"
+    done < <(find . -name "*.sinc" -print0)
+
+    # Rewrite manifest dependency/driver suffixes from .sinc to .trg, then encode
+    if [ -f "$REL_MANIFEST" ]; then
+        sed 's/\.sinc;/\.trg;/g' "$REL_MANIFEST" > "$REL_MANIFEST.tmp"
+        "$TRG_ENCODE" "$REL_MANIFEST.tmp" "$REL_MANIFEST.trg"
+        rm -f "$REL_MANIFEST.tmp"
+    fi
+
+    "$STAFF_ELF" "$REL_MANIFEST.trg" "$OUT_SAFE_ABS"
+)

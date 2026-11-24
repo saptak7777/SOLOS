@@ -1,0 +1,49 @@
+// ==========================================
+// lit/pure/slots.sinc
+// Pure 32-Byte Slot Table Operations (100% OS-Blind)
+// ==========================================
+
+fn slot_is_occupied(table, slot_id) [
+    idx = slot_id << 2;
+    entry = table@[idx];
+    if (entry != 0) [
+        ret 1;
+    ]
+    ret 0;
+]
+
+fn slot_get_pages(table, slot_id) [
+    idx = (slot_id << 2) + SLOT_PAGES;
+    ret table@[idx];
+]
+
+fn slot_get_hash(table, slot_id) [
+    idx = (slot_id << 2) + SLOT_HASH;
+    ret table@[idx];
+]
+
+fn slot_find_free(table) [
+    slot_res = -1;
+    loop (s:63 = 1 .. 64) [
+        if (slot_res == -1) [
+            if (slot_is_occupied(table, s) == 0) [
+                slot_res = s;
+            ]
+        ]
+    ]
+    ret slot_res;
+]
+
+fn slot_find_by_hash(table, hash_val) [
+    match_slot = -1;
+    loop (h:64 = 0 .. 64) [
+        if (match_slot == -1) [
+            if (slot_is_occupied(table, h) != 0) [
+                if (slot_get_hash(table, h) == hash_val) [
+                    match_slot = h;
+                ]
+            ]
+        ]
+    ]
+    ret match_slot;
+]

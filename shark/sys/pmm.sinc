@@ -1,0 +1,259 @@
+// ==========================================
+// shark/sys/pmm.sinc
+// SHARK Flat 64-Bit Bitmap Physical Memory Manager
+// ==========================================
+
+fn pmm_init!(ram_tape, ram_count) [
+    if (ram_count == 0) [
+        io_out32!(TRG_DEBUG_PORT, ERR_PMM_NO_RAM);
+        ret 0;
+    ]
+
+    bss_base = ram_tape - 49216;
+    pmm = bss_base + 24832;
+
+    // Scan ram_tape to determine max_page
+    max_page = 0;
+    loop (i:512 = 0 .. ram_count) [
+        entry = ram_tape@[i];
+        base_p = (entry >> 32) & 4294967295;
+        pages = entry & 4294967295;
+        end_p = base_p + pages;
+        if (end_p > max_page) [
+            max_page = end_p;
+        ]
+    ]
+
+    if (max_page == 0) [
+        io_out32!(TRG_DEBUG_PORT, ERR_PMM_NO_RAM);
+        ret 0;
+    ]
+
+    num_words = (max_page + 63) >> 6;
+    bitmap_bytes = num_words << 3;
+    bitmap_pages = (bitmap_bytes + 4095) >> 12;
+
+    // Image boundaries: PE image start to end of BSS stack
+    img_start = bss_base - 32768;
+    img_end = bss_base + 65536;
+    img_start_p = img_start >> 12;
+    img_end_p = (img_end + 4095) >> 12;
+
+    // Carve bitmap buffer out of first suitable region in ram_tape outside image
+    bitmap_base = 0;
+    loop (r:512 = 0 .. ram_count) [
+        if (bitmap_base == 0) [
+            entry = ram_tape@[r];
+            reg_start_p = (entry >> 32) & 4294967295;
+            pages = entry & 4294967295;
+            reg_end_p = reg_start_p + pages;
+
+            // Region below image
+            if (!(reg_end_p > img_start_p)) [
+                if (!(pages < bitmap_pages)) [
+                    bitmap_base = reg_start_p << 12;
+                ]
+            ]
+
+            // Region above image
+            if (!(reg_start_p < img_end_p)) [
+                if (!(pages < bitmap_pages)) [
+                    bitmap_base = reg_start_p << 12;
+                ]
+            ]
+
+            // Region intersects image: carve from cand_start_p
+            if (reg_start_p < img_end_p) [
+                if (reg_end_p > img_start_p) [
+                    cand_start_p = img_end_p;
+                    if (reg_end_p > cand_start_p) [
+                        avail_pages = reg_end_p - cand_start_p;
+                        if (!(avail_pages < bitmap_pages)) [
+                            bitmap_base = cand_start_p << 12;
+                        ]
+                    ]
+                ]
+            ]
+        ]
+    ]
+
+    if (bitmap_base == 0) [
+        io_out32!(TRG_DEBUG_PORT, ERR_PMM_NO_RAM);
+        ret 0;
+    ]
+
+    // Step A: Pre-fill bitmap with -1 (all pages reserved)
+    loop (w:131072 = 0 .. num_words) [
+        bitmap_base@[w] = -1;
+    ]
+
+    free_pages = 0;
+
+    // Step B: Clear bits (0 = free) for all usable ram_tape spans
+    loop (k:512 = 0 .. ram_count) [
+        entry = ram_tape@[k];
+        base_p = (entry >> 32) & 4294967295;
+        pages = entry & 4294967295;
+        loop (p:1000000 = 0 .. pages) [
+            page_idx = base_p + p;
+            if (page_idx < max_page) [
+                w_idx = page_idx >> 6;
+                b_idx = page_idx & 63;
+                is_used = (bitmap_base@[w_idx] >> b_idx) & 1;
+                if (is_used != 0) [
+                    free_pages = free_pages + 1;
+                ]
+                mask = -1 ^ (1 << b_idx);
+                bitmap_base@[w_idx] = bitmap_base@[w_idx] & mask;
+            ]
+        ]
+    ]
+
+    // Step C: Re-mark image span as 1 (used) in [img_start_p, img_end_p)
+    img_pages = img_end_p - img_start_p;
+    loop (ip:1000 = 0 .. img_pages) [
+        cur_p = img_start_p + ip;
+        if (cur_p < max_page) [
+            w_idx = cur_p >> 6;
+            b_idx = cur_p & 63;
+            is_used = (bitmap_base@[w_idx] >> b_idx) & 1;
+            if (is_used == 0) [
+                free_pages = free_pages - 1;
+            ]
+            bitmap_base@[w_idx] = bitmap_base@[w_idx] | (1 << b_idx);
+        ]
+    ]
+
+    // Step D: Re-mark bitmap's own pages as 1 (used) in [bmp_start_p, bmp_end_p)
+    bmp_start_p = bitmap_base >> 12;
+    bmp_end_p = (bitmap_base + bitmap_bytes + 4095) >> 12;
+    bmp_pages = bmp_end_p - bmp_start_p;
+    loop (bp:1000 = 0 .. bmp_pages) [
+        cur_p = bmp_start_p + bp;
+        if (cur_p < max_page) [
+            w_idx = cur_p >> 6;
+            b_idx = cur_p & 63;
+            is_used = (bitmap_base@[w_idx] >> b_idx) & 1;
+            if (is_used == 0) [
+                free_pages = free_pages - 1;
+            ]
+            bitmap_base@[w_idx] = bitmap_base@[w_idx] | (1 << b_idx);
+        ]
+    ]
+
+    // Step E: Page 0 Guard (Page 0 must be 1/used)
+    p0_used = bitmap_base@[0] & 1;
+    if (p0_used == 0) [
+        free_pages = free_pages - 1;
+    ]
+    bitmap_base@[0] = bitmap_base@[0] | 1;
+
+    // Populate PMM Control Block
+    pmm@[PMM_LENS_BITMAP_BASE] = bitmap_base;
+    pmm@[PMM_LENS_MAX_PAGE]    = max_page;
+    pmm@[PMM_LENS_NUM_WORDS]   = num_words;
+    pmm@[PMM_LENS_FREE_PAGES]  = free_pages;
+
+    ret pmm;
+]
+
+fn pmm_alloc_page!(pmm) [
+    bitmap_base = pmm@[PMM_LENS_BITMAP_BASE];
+    max_page    = pmm@[PMM_LENS_MAX_PAGE];
+    num_words   = pmm@[PMM_LENS_NUM_WORDS];
+
+    loop (w:131072 = 0 .. num_words) [
+        word = bitmap_base@[w];
+        if (word != -1) [
+            inv = -1 ^ word;
+            b_idx = ctz64(inv);
+            page_idx = (w << 6) | b_idx;
+            if (page_idx < max_page) [
+                bitmap_base@[w] = word | (1 << b_idx);
+                free_pages = pmm@[PMM_LENS_FREE_PAGES] - 1;
+                pmm@[PMM_LENS_FREE_PAGES] = free_pages;
+                ret page_idx << 12;
+            ]
+        ]
+    ]
+
+    io_out32!(TRG_DEBUG_PORT, ERR_PMM_OOM);
+    ret 0;
+]
+
+fn pmm_free_page!(pmm, phys_addr) [
+    if ((phys_addr & 4095) != 0) [
+        ret 1;
+    ]
+    bitmap_base = pmm@[PMM_LENS_BITMAP_BASE];
+    max_page    = pmm@[PMM_LENS_MAX_PAGE];
+
+    page_idx = phys_addr >> 12;
+    if (!(page_idx < max_page)) [
+        ret 2;
+    ]
+
+    w_idx = page_idx >> 6;
+    b_idx = page_idx & 63;
+    is_used = (bitmap_base@[w_idx] >> b_idx) & 1;
+    if (is_used == 0) [
+        ret 3;
+    ]
+
+    mask = -1 ^ (1 << b_idx);
+    bitmap_base@[w_idx] = bitmap_base@[w_idx] & mask;
+    free_pages = pmm@[PMM_LENS_FREE_PAGES] + 1;
+    pmm@[PMM_LENS_FREE_PAGES] = free_pages;
+    ret 0;
+]
+
+fn pmm_alloc_contiguous!(pmm, count) [
+    if (!(count > 0)) [
+        ret 0;
+    ]
+    if (count == 1) [
+        ret pmm_alloc_page!(pmm);
+    ]
+
+    bitmap_base = pmm@[PMM_LENS_BITMAP_BASE];
+    max_page    = pmm@[PMM_LENS_MAX_PAGE];
+    num_words   = pmm@[PMM_LENS_NUM_WORDS];
+
+    run_start = 0;
+    run_len = 0;
+
+    loop (w:131072 = 0 .. num_words) [
+        word = bitmap_base@[w];
+        if ((word != -1) | (run_len != 0)) [
+            loop (b:64 = 0 .. 64) [
+                p_idx = (w << 6) | b;
+                if (p_idx < max_page) [
+                    is_used = (word >> b) & 1;
+                    if (is_used == 0) [
+                        if (run_len == 0) [
+                            run_start = p_idx;
+                        ]
+                        run_len = run_len + 1;
+                        if (run_len == count) [
+                            loop (k:4096 = 0 .. count) [
+                                alloc_p = run_start + k;
+                                aw_idx = alloc_p >> 6;
+                                ab_idx = alloc_p & 63;
+                                bitmap_base@[aw_idx] = bitmap_base@[aw_idx] | (1 << ab_idx);
+                            ]
+                            pmm@[PMM_LENS_FREE_PAGES] = pmm@[PMM_LENS_FREE_PAGES] - count;
+                            ret run_start << 12;
+                        ]
+                    ]
+                    if (is_used != 0) [
+                        run_len = 0;
+                    ]
+                ]
+            ]
+        ]
+    ]
+
+    io_out32!(TRG_DEBUG_PORT, ERR_PMM_OOM);
+    ret 0;
+]
+

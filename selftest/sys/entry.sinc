@@ -1,0 +1,311 @@
+// ==========================================
+// selftest/sys/entry.sinc
+// Sovereign Hardware Invariant Proof Cell (Strict Law 15)
+// ==========================================
+
+fn test_pmm!(arena) [
+    p1 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    p2 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if ((p1 == 0) | (p2 == 0) | (p1 == p2)) [
+        ret 1;
+    ]
+    f_res = exocall!(arena, EXOCALL_PMM_FREE, p1, 1, 0, 0);
+    p3 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p2, 1, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p3, 1, 0, 0);
+    if ((f_res != 0) | (p3 != p1)) [
+        ret 2;
+    ]
+    ret 0;
+]
+
+fn test_caps!(arena) [
+    cap_table = arena@[ARENA_LENS_CAP_TABLE];
+    live_mask_ptr = arena@[ARENA_LENS_LIVE_MASK];
+
+    sip_id = cap_sip_alloc!(live_mask_ptr);
+    if (sip_id != 0) [
+        ret 3;
+    ]
+    token = cap_mint!(cap_table, 0, sip_id);
+    live_mask = live_mask_ptr@[0];
+    v1 = cap_validate_token(token, cap_table, live_mask);
+    if (v1 != 1) [
+        ret 4;
+    ]
+    cap_revoke!(cap_table, 0);
+    v2 = cap_validate_token(token, cap_table, live_mask);
+    if (v2 != 0) [
+        ret 5;
+    ]
+    cap_sip_free!(live_mask_ptr, sip_id);
+    ret 0;
+]
+
+fn test_nvme_case!(arena) [
+    write_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    read_buf  = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    loop (z:512 = 0 .. 512) [
+        write_buf@[z] = 0;
+        read_buf@[z] = 0;
+    ]
+    write_buf@[0] = -77074246535541692;
+    write_buf@[1] = 1337;
+
+    tmp_n0 = 1397296901;
+    h1 = case_fnv1a_64(write_buf, 64);
+    w1 = case_write_file!(arena, CASE_TYPE_DATA, tmp_n0, 0, write_buf, 64);
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    f1 = case_find_artifact!(arena, tmp_n0, 0, ext_buf);
+    pg1 = ext_buf@[CASE_EXT_PG];
+    ep1 = case_entry_epoch(ext_buf@[CASE_EXT_META]);
+    ty1 = case_entry_type(ext_buf@[CASE_EXT_META]);
+    hs1 = ext_buf@[CASE_EXT_HASH];
+    r1 = case_rw_pages!(arena, 0, pg1, 1, read_buf);
+    m1 = read_buf@[0];
+    t1 = read_buf@[1];
+
+    write_buf@[1] = 7331;
+    h2 = case_fnv1a_64(write_buf, 64);
+    w2 = case_write_file!(arena, CASE_TYPE_DATA, tmp_n0, 0, write_buf, 64);
+    f2 = case_find_artifact!(arena, tmp_n0, 0, ext_buf);
+    pg2 = ext_buf@[CASE_EXT_PG];
+    ep2 = case_entry_epoch(ext_buf@[CASE_EXT_META]);
+    hs2 = ext_buf@[CASE_EXT_HASH];
+    r2 = case_rw_pages!(arena, 0, pg2, 1, read_buf);
+    t2 = read_buf@[1];
+
+    d_res = case_delete_file!(arena, tmp_n0, 0);
+    gone_res = case_find_artifact!(arena, tmp_n0, 0, ext_buf);
+
+    exocall!(arena, EXOCALL_PMM_FREE, write_buf, 1, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, read_buf, 1, 0, 0);
+
+    if ((w1 != 0) | (f1 != 0) | (r1 != 0) | (w2 != 0) | (f2 != 0) | (r2 != 0) | (d_res != 0) | (!(gone_res < 0))) [
+        ret 6;
+    ]
+    if ((ty1 != CASE_TYPE_DATA) | (ep1 != 1) | (hs1 != h1) | (m1 != -77074246535541692) | (t1 != 1337)) [
+        ret 6;
+    ]
+    if ((pg2 == pg1) | (ep2 != 2) | (hs2 != h2) | (t2 != 7331)) [
+        ret 6;
+    ]
+    ret 0;
+]
+
+fn test_ring!(arena) [
+    ring_ptr = arena@[ARENA_LENS_RING];
+    r_push = ring_push!(ring_ptr, 30);
+    pop_val = ring_pop!(ring_ptr);
+    head = ring_ptr@[RING_LENS_HEAD];
+    tail = ring_ptr@[RING_LENS_TAIL];
+    if ((r_push != 0) | (pop_val != 30) | (head != tail)) [
+        ret 7;
+    ]
+    ret 0;
+]
+
+fn test_scancodes!() [
+    dec_err = (trg_is_break_code(30) != 0) | (trg_is_break_code(158) != 1) | (trg_update_shift_state(42, 0) != 1) | (trg_update_shift_state(170, 1) != 0);
+    trg_err = (trg_scancode_to_trg(30, 0) != 26) | (trg_scancode_to_trg(30, 1) != 0) | (trg_scancode_to_trg(28, 0) != 241) | (trg_scancode_to_trg(57, 0) != 240) | (trg_scancode_to_trg(14, 0) != TRG_BS) | (trg_scancode_to_trg(158, 0) != -1) | (trg_scancode_to_trg(42, 0) != -1);
+    if ((dec_err | trg_err) != 0) [
+        ret 8;
+    ]
+    ret 0;
+]
+
+fn test_console!(arena) [
+    state_ptr = arena@[ARENA_LENS_CONSOLE];
+    stride = state_ptr@[CONSOLE_LENS_STRIDE];
+    backbuffer = state_ptr@[CONSOLE_LENS_BACKBUFFER];
+    fb_base = state_ptr@[CONSOLE_LENS_FB_BASE];
+
+    c_lo = COLOR_BG & 4294967295;
+    bg_qw = (c_lo << 32) | c_lo;
+
+    sample_a_idx = (5 * stride) >> 3;
+    sample_a = backbuffer@[sample_a_idx];
+    sample_b_idx = (21 * stride + 320) >> 3;
+    sample_b = backbuffer@[sample_b_idx];
+
+    render_err = (sample_a == bg_qw) | (sample_b == bg_qw);
+    if (fb_base != 0) [
+        render_err = render_err | (fb_base@[sample_a_idx] != sample_a) | (fb_base@[sample_b_idx] != sample_b);
+    ]
+    if (render_err != 0) [
+        ret 9;
+    ]
+    ret 0;
+]
+
+fn test_dag_cycle!(arena) [
+    svc_table = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if (svc_table == 0) [
+        ret 12;
+    ]
+    loop (cl:256 = 0 .. 256) [
+        svc_table@[cl] = 0;
+    ]
+    idx_30_deps = (30 << 2) + SVC_LENS_DEPS;
+    idx_31_deps = (31 << 2) + SVC_LENS_DEPS;
+    svc_table@[idx_30_deps] = 1 << 31;
+    svc_table@[idx_31_deps] = 1 << 30;
+
+    cycle_res = dag_pick_next_runnable(svc_table, (1 << 30) | (1 << 31), 0);
+    exocall!(arena, EXOCALL_PMM_FREE, svc_table, 1, 0, 0);
+    if (cycle_res != -1) [
+        ret 12;
+    ]
+    ret 0;
+]
+
+fn test_lit_slots!(arena) [
+    table = arena@[ARENA_LENS_LIT_TABLE];
+
+    target_slot = slot_find_free(table);
+    if (target_slot < 1) [
+        ret 13;
+    ]
+
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, FILE_V1_SAFE_0, 0, ext_buf) != 0) [
+        ret 14;
+    ]
+    if (case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_SAFE) [
+        ret 14;
+    ]
+    pg_v1    = ext_buf@[CASE_EXT_PG];
+    pages_v1 = ext_buf@[CASE_EXT_PAGES];
+    bytes_v1 = ext_buf@[CASE_EXT_BYTES];
+    hash_v1  = ext_buf@[CASE_EXT_HASH];
+    lba_v1   = pg_v1 << 3;
+    secs_v1  = pages_v1 << 3;
+
+    if (case_find_artifact!(arena, FILE_V2_SAFE_0, 0, ext_buf) != 0) [
+        ret 15;
+    ]
+    if (case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_SAFE) [
+        ret 15;
+    ]
+    lba_v2  = ext_buf@[CASE_EXT_PG] << 3;
+    secs_v2 = ext_buf@[CASE_EXT_PAGES] << 3;
+    hash_v2 = ext_buf@[CASE_EXT_HASH];
+
+    if (case_find_artifact!(arena, FILE_SINC_SAFE_0, FILE_SINC_SAFE_1, ext_buf) != 0) [
+        ret 16;
+    ]
+
+    r_load = exocall!(arena, EXOCALL_SLOT_LOAD, target_slot, lba_v1, secs_v1, hash_v1);
+    if (r_load != LIT_EXIT_OK) [
+        ret 17;
+    ]
+
+    if (slot_find_by_hash(table, hash_v1) != target_slot) [
+        ret 18;
+    ]
+
+    val1 = exocall!(arena, EXOCALL_SLOT_CALL, target_slot, 0, 0, 0);
+    if (val1 != 100) [
+        ret 19;
+    ]
+
+    r_swap = exocall!(arena, EXOCALL_SLOT_HOTSWAP, target_slot, lba_v2, secs_v2, hash_v2);
+    if (r_swap != LIT_EXIT_OK) [
+        ret 20;
+    ]
+
+    val2 = exocall!(arena, EXOCALL_SLOT_CALL, target_slot, 0, 0, 0);
+    if (val2 != 200) [
+        ret 21;
+    ]
+
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, target_slot, 0, 0, 0);
+    if (slot_is_occupied(table, target_slot) != 0) [
+        ret 22;
+    ]
+
+    mem_page = exocall!(arena, EXOCALL_PMM_ALLOC, pages_v1, 0, 0, 0);
+    if (mem_page == 0) [
+        ret 23;
+    ]
+    r_nvme = case_rw_pages!(arena, 0, pg_v1, pages_v1, mem_page);
+    if (r_nvme != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, mem_page, pages_v1, 0, 0);
+        ret 24;
+    ]
+    r_load_mem = exocall!(arena, EXOCALL_SLOT_LOAD_MEM, target_slot, mem_page, bytes_v1, hash_v1);
+    exocall!(arena, EXOCALL_PMM_FREE, mem_page, pages_v1, 0, 0);
+    if (r_load_mem != LIT_EXIT_OK) [
+        ret 25;
+    ]
+    val_mem = exocall!(arena, EXOCALL_SLOT_CALL, target_slot, 0, 0, 0);
+    if (val_mem != 100) [
+        ret 26;
+    ]
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, target_slot, 0, 0, 0);
+    if (slot_is_occupied(table, target_slot) != 0) [
+        ret 27;
+    ]
+    ret 0;
+]
+
+fn test_sinc_compiler!(arena) [
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    app_slot = slot_find_free(table);
+    if (app_slot < 0) [
+        ret 28;
+    ]
+    r_comp = cell_compile_and_load!(arena, FILE_APP_TRG_0, FILE_APP_TRG_1, app_slot);
+    if (r_comp != 0) [
+        ret 29;
+    ]
+    app_val = exocall!(arena, EXOCALL_SLOT_CALL, app_slot, 0, 0, 0);
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, app_slot, 0, 0, 0);
+    if (app_val != 77) [
+        ret 30;
+    ]
+    ret 0;
+]
+
+fn main!(arena) [
+    if (arena == 0) [
+        ret 11;
+    ]
+
+    if (test_pmm!(arena) != 0) [
+        ret 1;
+    ]
+    if (test_caps!(arena) != 0) [
+        ret 3;
+    ]
+    if (test_nvme_case!(arena) != 0) [
+        ret 6;
+    ]
+    if (test_ring!(arena) != 0) [
+        ret 7;
+    ]
+    if (test_scancodes!() != 0) [
+        ret 8;
+    ]
+    if (test_console!(arena) != 0) [
+        ret 9;
+    ]
+
+    t_res = exocall!(arena, EXOCALL_WAIT_TICKS, 5, 0, 0, 0);
+    if (t_res == 0) [
+        ret 10;
+    ]
+
+    if (test_dag_cycle!(arena) != 0) [
+        ret 12;
+    ]
+    if (test_lit_slots!(arena) != 0) [
+        ret 13;
+    ]
+    if (test_sinc_compiler!(arena) != 0) [
+        ret 14;
+    ]
+
+    ret 0;
+]
+

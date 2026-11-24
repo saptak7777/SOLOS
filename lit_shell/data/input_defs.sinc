@@ -1,0 +1,27 @@
+// ==========================================
+// lit_shell/data/input_defs.sinc
+// Userland Keyboard Layout Tables (PS/2 Set 1 -> Pure TRG)
+// ==========================================
+
+const TRG_BS   = 238; // Backspace control slot
+const TRG_NONE = 239; // Unmapped scancode placeholder
+
+// KBD_UNSHIFT: PS/2 Set 1 scancodes 0..63 -> TRG slots (signed i64)
+const KBD_UNSHIFT_0 = 4195446337656188911;  // slots: [239, 239, 53, 54, 55, 56, 57, 58]
+const KBD_UNSHIFT_1 = -941686143005672389;  // slots: [59, 60, 61, 52, 113, 117, 238, 242]
+const KBD_UNSHIFT_2 = 2462961215796555818;  // slots: [42, 48, 30, 43, 45, 50, 46, 34]
+const KBD_UNSHIFT_3 = 3178116309589567784;  // slots: [40, 41, 246, 247, 241, 239, 26, 44]
+const KBD_UNSHIFT_4 = -421891256791064803;  // slots: [29, 31, 32, 33, 35, 36, 37, 250]
+const KBD_UNSHIFT_5 = 3394642316188712959;  // slots: [255, 255, 239, 115, 51, 49, 28, 47]
+const KBD_UNSHIFT_6 = 8281965774451910427;  // slots: [27, 39, 38, 252, 253, 115, 239, 114]
+const KBD_UNSHIFT_7 = -1157442765409226513; // slots: [239, 240, 239, 239, 239, 239, 239, 239]
+
+// KBD_SHIFT: Shifted PS/2 Set 1 scancodes 0..63 -> TRG slots (signed i64)
+const KBD_SHIFT_0 = 8895875349523001327;  // slots: [239, 239, 120, 126, 127, 127, 116, 123]
+const KBD_SHIFT_1 = -941691078968053127;  // slots: [121, 114, 244, 245, 243, 112, 238, 242]
+const KBD_SHIFT_2 = 582116722006562320;   // slots: [16, 22, 4, 17, 19, 24, 20, 8]
+const KBD_SHIFT_3 = 1297300515242643214;  // slots: [14, 15, 248, 249, 241, 239, 0, 18]
+const KBD_SHIFT_4 = -357180711557004029;  // slots: [3, 5, 6, 7, 9, 10, 11, 251]
+const KBD_SHIFT_5 = 1513797822954044670;  // slots: [254, 124, 239, 122, 25, 23, 2, 21]
+const KBD_SHIFT_6 = 8281976191792712961;  // slots: [1, 13, 12, 118, 119, 125, 239, 114]
+const KBD_SHIFT_7 = -1157442765409226513; // slots: [239, 240, 239, 239, 239, 239, 239, 239]

@@ -1,0 +1,66 @@
+// ==========================================
+// sinc_cell/sys/entry.sinc
+// Bare-Metal SINC Compiler Cell (target = x86_64_none, Strict Law 15)
+// ==========================================
+
+extern fn exocall!();
+extern fn cell_try_mark!();
+extern fn cell_abort!();
+
+fn sys_write!(fd, buf, size) [
+    ret size;
+]
+
+fn sys_exit!(code) [
+    cell_abort!(code);
+    ret code;
+]
+
+fn main!(comp_req) [
+    cell_try_mark!();
+
+    src_buf     = comp_req@[0];
+    src_bytes   = comp_req@[1];
+    arena_mem   = comp_req@[2];
+    arena_bytes = comp_req@[3];
+
+    if ((src_buf == 0) | (src_bytes == 0) | (arena_mem == 0) | (arena_bytes == 0)) [
+        ret 20;
+    ]
+
+    n_words = arena_bytes >> 3;
+    if (n_words > 4194304) [
+        ret 20;
+    ]
+    loop (z:4194304 = 0 .. n_words) [
+        arena_mem@[z] = 0;
+    ]
+
+    arena = arena_init!(arena_mem, arena_bytes);
+    res = compile_core!(src_buf, src_bytes, arena);
+
+    code_ptr  = res@[0];
+    code_len  = res@[1];
+    hdr_ptr   = res@[2];
+    if (code_len > 262144) [
+        ret 99;
+    ]
+
+    total_len = 32 + code_len;
+    out_safe = arena_alloc!(arena, total_len);
+    if (out_safe == 0) [
+        ret 99;
+    ]
+
+    loop (h:4 = 0 .. 4) [
+        out_safe@[h] = hdr_ptr@[h];
+    ]
+    out_code = out_safe + 32;
+    loop (i:262144 = 0 .. code_len) [
+        out_code@[i * 1] = code_ptr@[i * 1];
+    ]
+
+    comp_req@[4] = out_safe;
+    comp_req@[5] = total_len;
+    ret 0;
+]

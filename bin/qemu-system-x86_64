@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(dirname "$SCRIPT_DIR")
+export LD_LIBRARY_PATH="$REPO_ROOT/scratch/tools/usr/lib:${LD_LIBRARY_PATH:-}"
+export QEMU_FIRMWARE_DIR="$REPO_ROOT/scratch/tools/usr/share/qemu"
+exec "$REPO_ROOT/scratch/tools/usr/bin/qemu-system-x86_64" -L "$REPO_ROOT/scratch/tools/usr/share/qemu" "$@"
+

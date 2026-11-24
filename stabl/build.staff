@@ -1,0 +1,17 @@
+// ==========================================
+// stabl/build.staff
+// STABL: Simple Typeless Artifact Boot Loader
+// ==========================================
+
+artifact stabl [
+    target = x86_64_none;
+    type   = bin;
+]
+
+deps [
+]
+
+flags [
+    optimize = 3;
+    heap     = 1000000000;
+]
