@@ -74,18 +74,6 @@ const ERR_CONSOLE_OOM      = 40;
 // Pure TRG Telemetry & Title QWORD Constants (Signed Little-Endian i64)
 const STR_SHARK_V0            = 3760488139903207186;  // "SHARK v0" (len 8)
 const STR_BOOT_PREFIX         = -643154868458557200;  // "  [BOOT]" (len 8)
-const STR_TAG_CPU             = 264943984116470;      // "[CPU] "   (len 6)
-const STR_TAG_PMM             = 264943849705462;      // "[PMM] "   (len 6)
-const STR_TAG_RAM             = 264943848919542;      // "[RAM] "   (len 6)
-const STR_TAG_NVME            = 67825591165193718;    // "[NVME] "  (len 7)
-const STR_TAG_GOP             = 264943900165878;      // "[GOP] "   (len 6)
-const STR_TAG_TRG             = 264943749370870;      // "[TRG] "   (len 6)
-const STR_TAG_READY           = -1083370784195079690; // "[READY] " (len 8)
-const STR_REGIONS             = 3181555788793392112;  // " regions" (len 8)
-const STR_AVX512              = -1137663335037725440; // "AVX-512 " (len 8)
-const STR_AVX2                = -1085102595705989888; // "AVX2    " (len 8)
-const STR_FREE                = -1144444084737246480; // " | free " (len 8)
-const STR_MAX                 = -1085313521804086288; // " / max  " (len 8)
 
 // Milestone 7: Linear Exchange Arena & Sovereign Cell Lenses
 const ARENA_BSS_OFFSET     = 28672; // bss_base + 0x7000 (64-byte aligned)

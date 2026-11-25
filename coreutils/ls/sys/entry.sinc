@@ -1,0 +1,64 @@
+// ==========================================
+// coreutils/ls/sys/entry.sinc
+// On-Demand CASE Artifact Directory Cell (Strict Law 15)
+// ==========================================
+
+fn ls_print_name!(console, tbl_buf, base) [
+    name_base = tbl_buf + (base << 3) + (CASE_LENS_NAME_0 << 3);
+    stopped = 0;
+    loop (i:16 = 0 .. 16) [
+        if (stopped == 0) [
+            ch = name_base@[i * 1];
+            if (ch == 0) [
+                stopped = 1;
+            ]
+            if (ch != 0) [
+                console_putc!(console, ch);
+            ]
+        ]
+    ]
+    ret 0;
+]
+
+fn main!(arena) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    tbl_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if (tbl_buf == 0) [
+        console_print_qword!(console, STR_FAIL_TAG_0, 6);
+        console_newline!(console);
+        ret 1;
+    ]
+    r_tbl = exocall!(arena, EXOCALL_NVME_RW, 0, CASE_TABLE_LBA, 8, tbl_buf);
+    if (r_tbl != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
+        console_print_qword!(console, STR_FAIL_TAG_0, 6);
+        console_newline!(console);
+        ret 1;
+    ]
+    console_print_qword!(console, STR_FS_DIR_HEADER_0, 8);
+    console_print_qword!(console, STR_FS_DIR_HEADER_1, 8);
+    console_print_qword!(console, STR_FS_DIR_HEADER_2, 4);
+    console_newline!(console);
+    loop (i:64 = 0 .. CASE_MAX_ENTRIES) [
+        base = i << 3;
+        meta = tbl_buf@[(base + CASE_LENS_META)];
+        ty = case_entry_type(meta);
+        if (ty != CASE_TYPE_FREE) [
+            ls_print_name!(console, tbl_buf, base);
+            pg = tbl_buf@[(base + CASE_LENS_START_PG)];
+            ep = case_entry_epoch(meta);
+            sz = tbl_buf@[(base + CASE_LENS_BYTES)];
+            console_print_qword!(console, STR_FS_PG_TAG_0, 5);
+            console_print_dec!(console, pg);
+            console_print_qword!(console, STR_FS_TY_TAG_0, 5);
+            console_print_dec!(console, ty);
+            console_print_qword!(console, STR_FS_EP_TAG_0, 5);
+            console_print_dec!(console, ep);
+            console_print_qword!(console, STR_FS_SIZE_TAG_0, 8);
+            console_print_dec!(console, sz);
+            console_newline!(console);
+        ]
+    ]
+    exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
+    ret 0;
+]

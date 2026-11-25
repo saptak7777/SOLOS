@@ -16,10 +16,10 @@
 !bin/slim.elf
 
 # 3 Primary Workspace Folders
-scratch/
-build/
-.cache/
-docs/
+/scratch/
+/build/
+/.cache/
+/docs/
 
 # OS & Editor Artifacts
 .DS_Store

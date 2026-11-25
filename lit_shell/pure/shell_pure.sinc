@@ -1,91 +1,7 @@
 // ==========================================
 // lit_shell/pure/shell_pure.sinc
-// Pure TRG Command Parsing & Lexing (Strict Law 15)
+// Built-in REPL Command Matcher (Strict Law 15)
 // ==========================================
-
-fn shell_get_word_len(buf, start, max_len) [
-    len = 0;
-    stopped = 0;
-    loop (i:64 = 0 .. 64) [
-        if (stopped == 0) [
-            pos = start + i;
-            if (pos < max_len) [
-                if (buf@[pos * 1] != 240) [
-                    len = len + 1;
-                ]
-                if (buf@[pos * 1] == 240) [
-                    stopped = 1;
-                ]
-            ]
-        ]
-    ]
-    ret len;
-]
-
-fn shell_read_word_qw(buf, start, max_len) [
-    val = 0;
-    stopped = 0;
-    loop (i:8 = 0 .. 8) [
-        if (stopped == 0) [
-            pos = start + i;
-            if (pos < max_len) [
-                ch = buf@[pos * 1];
-                if (ch != 240) [
-                    shift = i << 3;
-                    val = val | (ch << shift);
-                ]
-                if (ch == 240) [
-                    stopped = 1;
-                ]
-            ]
-        ]
-    ]
-    ret val;
-]
-
-fn shell_skip_word(buf, idx, max_len) [
-    done_word = 0;
-    loop (i:64 = 0 .. 64) [
-        if (idx < max_len) [
-            ch = buf@[idx * 1];
-            if (done_word == 0) [
-                if (ch == 240) [
-                    done_word = 1;
-                ]
-                if (ch != 240) [
-                    idx = idx + 1;
-                ]
-            ]
-            if (done_word != 0) [
-                if (ch == 240) [
-                    idx = idx + 1;
-                ]
-            ]
-        ]
-    ]
-    ret idx;
-]
-
-fn shell_parse_dec(buf, idx, max_len) [
-    val = 0;
-    stopped = 0;
-    loop (i:16 = 0 .. 16) [
-        if (stopped == 0) [
-            pos = idx + i;
-            if (pos < max_len) [
-                ch = buf@[pos * 1];
-                if ((ch > 51) & (ch < 62)) [
-                    digit = ch - 52;
-                    val = (val * 10) + digit;
-                ]
-                if (!((ch > 51) & (ch < 62))) [
-                    stopped = 1;
-                ]
-            ]
-        ]
-    ]
-    ret val;
-]
 
 fn shell_match_cmd(buf, max_len) [
     w_len = shell_get_word_len(buf, 0, max_len);
@@ -111,20 +27,9 @@ fn shell_match_cmd(buf, max_len) [
             ret CMD_SWAP;
         ]
     ]
-    if (w_len == 2) [
-        if (w_qw == STR_CMD_LS_0) [
-            ret CMD_LS;
-        ]
-        if (w_qw == STR_CMD_RM_0) [
-            ret CMD_RM;
-        ]
-    ]
     if (w_len == 3) [
         if (w_qw == STR_CMD_MEM_0) [
             ret CMD_MEM;
-        ]
-        if (w_qw == STR_CMD_CAT_0) [
-            ret CMD_CAT;
         ]
     ]
     if (w_len == 5) [
@@ -133,9 +38,6 @@ fn shell_match_cmd(buf, max_len) [
         ]
         if (w_qw == STR_CMD_CLEAR_0) [
             ret CMD_CLEAR;
-        ]
-        if (w_qw == STR_CMD_BUILD_0) [
-            ret CMD_BUILD;
         ]
     ]
     if (w_len == 6) [

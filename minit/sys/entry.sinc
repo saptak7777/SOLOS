@@ -52,7 +52,7 @@ fn main!(arena) [
     loop (step:64 = 0 .. 64) [
         if (ready_mask == wanted_mask) [
             exocall!(arena, EXOCALL_SLOT_UNLOAD, 2, 0, 0, 0);
-            ret MINIT_PASS_CODE;
+            ret 0;
         ]
 
         s = dag_pick_next_runnable(svc_table, wanted_mask, ready_mask);

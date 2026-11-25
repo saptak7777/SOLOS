@@ -10,13 +10,13 @@ artifact lit_shell [
 
 deps [
     spine/data/abi_defs.sinc;
+    spine/data/cli_defs.sinc;
+    spine/pure/cmd_line.sinc;
     lit/data/lit_defs.sinc;
     lit/pure/slots.sinc;
     case/data/case_defs.sinc;
     case/pure/case.sinc;
-    case/pure/case_alloc.sinc;
-    case/sys/case_io.sinc;
-    spine/sys/sinc_client.sinc;
+    case/sys/case_read.sinc;
     shark/data/console_defs.sinc;
     shark/data/input_defs.sinc;
     shark/pure/math.sinc;

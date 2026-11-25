@@ -33,6 +33,12 @@ fn cell_compile_and_load!(arena, src_n0, src_n1, target_slot) [
     ]
 
     table = arena@[ARENA_LENS_LIT_TABLE];
+    if ((target_slot < 1) | (!(target_slot < LIT_MAX_SLOTS))) [
+        ret 16;
+    ]
+    if (slot_is_occupied(table, target_slot) != 0) [
+        ret 17;
+    ]
     cc_slot = slot_find_free(table);
     if (cc_slot < 0) [
         ret 5;

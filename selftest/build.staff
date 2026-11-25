@@ -15,7 +15,8 @@ deps [
     case/data/case_defs.sinc;
     case/pure/case.sinc;
     case/pure/case_alloc.sinc;
-    case/sys/case_io.sinc;
+    case/sys/case_read.sinc;
+    case/sys/case_write.sinc;
     spine/sys/sinc_client.sinc;
     minit/data/minit_defs.sinc;
     minit/pure/dag.sinc;

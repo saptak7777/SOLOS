@@ -1,0 +1,30 @@
+// ==========================================
+// coreutils/build/sys/entry.sinc
+// On-Demand Live-on-Time .trg -> W^X Slot Compiler Cell (Strict Law 15)
+// ==========================================
+
+fn main!(arena) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    cli = arena@[ARENA_LENS_META_BUF] + META_CLI_ARGS_OFF;
+    buf = cli@[0];
+    len = cli@[1];
+    if ((buf == 0) | (len == 0)) [
+        ret 1;
+    ]
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (shell_parse_name!(buf, 0, len, ext_buf) == 0) [
+        ret 1;
+    ]
+    src_n0 = ext_buf@[0];
+    src_n1 = ext_buf@[1];
+    idx2 = shell_skip_word(buf, 0, len);
+    if (!(idx2 < len)) [
+        ret 1;
+    ]
+    target_slot = shell_parse_dec(buf, idx2, len);
+    r_build = cell_compile_and_load!(arena, src_n0, src_n1, target_slot);
+    console_print_qword!(console, STR_RES_TAG_0, 5);
+    console_print_dec!(console, r_build);
+    console_newline!(console);
+    ret r_build;
+]

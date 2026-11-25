@@ -3,39 +3,56 @@
 // Sovereign LIT Interactive Shell Cell (Strict Law 15)
 // ==========================================
 
-fn shell_parse_name!(buf, idx, max_len, out_pair) [
-    w_len = shell_get_word_len(buf, idx, max_len);
-    if (w_len == 0) [
-        ret 0;
-    ]
-    n0 = 0;
-    n1 = 0;
-    if (!(w_len > 8)) [
-        n0 = shell_read_word_qw(buf, idx, max_len);
-    ]
-    if (w_len > 8) [
-        n0 = shell_read_word_qw(buf, idx, (idx + 8));
-        n1 = shell_read_word_qw(buf, (idx + 8), (idx + w_len));
-    ]
-    out_pair@[0] = n0;
-    out_pair@[1] = n1;
-    ret w_len;
-]
+fn shell_dispatch_cell!(arena, buf, len) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    w_len = shell_get_word_len(buf, 0, len);
+    name_buf = arena@[ARENA_LENS_META_BUF] + 576;
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
 
-fn shell_print_name!(console, dir_buf, base) [
-    name_base = dir_buf + (base << 3) + (CASE_LENS_NAME_0 << 3);
-    stopped = 0;
-    loop (i:16 = 0 .. 16) [
-        if (stopped == 0) [
-            ch = name_base@[i * 1];
-            if (ch == 0) [
-                stopped = 1;
-            ]
-            if (ch != 0) [
-                console_putc!(console, ch);
+    found = 0;
+    if (cmd_append_ext!(buf, w_len, CASE_SAFE_EXT_PACKED, name_buf) != 0) [
+        if (case_find_artifact!(arena, name_buf@[0], name_buf@[1], ext_buf) == 0) [
+            if (case_entry_type(ext_buf@[CASE_EXT_META]) == CASE_TYPE_SAFE) [
+                found = 1;
             ]
         ]
     ]
+
+    if (found == 0) [
+        console_print_qword!(console, STR_UNKNOWN_CMD_0, 8);
+        console_print_qword!(console, STR_UNKNOWN_CMD_1, 8);
+        console_print_qword!(console, STR_UNKNOWN_CMD_2, 8);
+        console_print_qword!(console, STR_UNKNOWN_CMD_3, 3);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    cmd_slot = slot_find_free_high(table);
+    if (cmd_slot < 0) [
+        console_print_qword!(console, STR_FAIL_TAG_0, 6);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    lba = ext_buf@[CASE_EXT_PG] << 3;
+    secs = ext_buf@[CASE_EXT_PAGES] << 3;
+    hash_val = ext_buf@[CASE_EXT_HASH];
+    if (exocall!(arena, EXOCALL_SLOT_LOAD, cmd_slot, lba, secs, hash_val) != LIT_EXIT_OK) [
+        console_print_qword!(console, STR_FAIL_TAG_0, 6);
+        console_newline!(console);
+        ret 0;
+    ]
+
+    cli = arena@[ARENA_LENS_META_BUF] + META_CLI_ARGS_OFF;
+    idx_arg = shell_skip_word(buf, 0, len);
+    cli@[0] = buf + idx_arg;
+    cli@[1] = len - idx_arg;
+
+    exocall!(arena, EXOCALL_SLOT_CALL, cmd_slot, arena, 0, 0);
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, cmd_slot, 0, 0, 0);
+    cli@[0] = 0;
+    cli@[1] = 0;
     ret 0;
 ]
 
@@ -177,123 +194,7 @@ fn shell_execute_line!(arena, scratch, buf, len) [
         ret 0;
     ]
 
-    if (cmd == CMD_LS) [
-        dir_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
-        if (dir_buf == 0) [
-            console_print_qword!(console, STR_FAIL_TAG_0, 6);
-            console_newline!(console);
-            ret 0;
-        ]
-        r_dir = exocall!(arena, EXOCALL_NVME_RW, 0, CASE_TABLE_LBA, 8, dir_buf);
-        if (r_dir != 0) [
-            exocall!(arena, EXOCALL_PMM_FREE, dir_buf, 1, 0, 0);
-            console_print_qword!(console, STR_FAIL_TAG_0, 6);
-            console_newline!(console);
-            ret 0;
-        ]
-        console_print_qword!(console, STR_FS_DIR_HEADER_0, 8);
-        console_print_qword!(console, STR_FS_DIR_HEADER_1, 8);
-        console_print_qword!(console, STR_FS_DIR_HEADER_2, 4);
-        console_newline!(console);
-        loop (i:64 = 0 .. CASE_MAX_ENTRIES) [
-            base = i << 3;
-            meta = dir_buf@[(base + CASE_LENS_META)];
-            ty = case_entry_type(meta);
-            if (ty != CASE_TYPE_FREE) [
-                shell_print_name!(console, dir_buf, base);
-                pg = dir_buf@[(base + CASE_LENS_START_PG)];
-                ep = case_entry_epoch(meta);
-                sz = dir_buf@[(base + CASE_LENS_BYTES)];
-                console_print_qword!(console, STR_FS_PG_TAG_0, 5);
-                console_print_dec!(console, pg);
-                console_print_qword!(console, STR_FS_TY_TAG_0, 5);
-                console_print_dec!(console, ty);
-                console_print_qword!(console, STR_FS_EP_TAG_0, 5);
-                console_print_dec!(console, ep);
-                console_print_qword!(console, STR_FS_SIZE_TAG_0, 8);
-                console_print_dec!(console, sz);
-                console_newline!(console);
-            ]
-        ]
-        exocall!(arena, EXOCALL_PMM_FREE, dir_buf, 1, 0, 0);
-        ret 0;
-    ]
-
-    if (cmd == CMD_CAT) [
-        idx1 = shell_skip_word(buf, 0, len);
-        ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
-        if (shell_parse_name!(buf, idx1, len, ext_buf) == 0) [
-            ret 0;
-        ]
-        if (case_find_artifact!(arena, ext_buf@[0], ext_buf@[1], ext_buf) != 0) [
-            console_print_qword!(console, STR_FS_NOT_FOUND_0, 8);
-            console_print_qword!(console, STR_FS_NOT_FOUND_1, 6);
-            console_newline!(console);
-            ret 0;
-        ]
-        file_pg = ext_buf@[CASE_EXT_PG];
-        file_sz = ext_buf@[CASE_EXT_BYTES];
-        file_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
-        if (file_buf == 0) [
-            ret 0;
-        ]
-        r_read = case_rw_pages!(arena, 0, file_pg, 1, file_buf);
-        if (r_read == 0) [
-            p_len = file_sz;
-            if (p_len > 512) [
-                p_len = 512;
-            ]
-            loop (b:512 = 0 .. p_len) [
-                b_ch = file_buf@[b * 1];
-                console_putc!(console, b_ch);
-            ]
-            console_newline!(console);
-        ]
-        exocall!(arena, EXOCALL_PMM_FREE, file_buf, 1, 0, 0);
-        ret 0;
-    ]
-
-    if (cmd == CMD_RM) [
-        idx1 = shell_skip_word(buf, 0, len);
-        ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
-        if (shell_parse_name!(buf, idx1, len, ext_buf) == 0) [
-            ret 0;
-        ]
-        if (case_delete_file!(arena, ext_buf@[0], ext_buf@[1]) != 0) [
-            console_print_qword!(console, STR_FS_NOT_FOUND_0, 8);
-            console_print_qword!(console, STR_FS_NOT_FOUND_1, 6);
-            console_newline!(console);
-            ret 0;
-        ]
-        console_print_qword!(console, STR_FS_RM_OK_0, 8);
-        console_print_qword!(console, STR_FS_RM_OK_1, 4);
-        console_newline!(console);
-        ret 0;
-    ]
-
-    if (cmd == CMD_BUILD) [
-        idx1 = shell_skip_word(buf, 0, len);
-        ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
-        if (shell_parse_name!(buf, idx1, len, ext_buf) == 0) [
-            ret 0;
-        ]
-        src_n0 = ext_buf@[0];
-        src_n1 = ext_buf@[1];
-        idx2 = shell_skip_word(buf, idx1, len);
-        target_slot = shell_parse_dec(buf, idx2, len);
-        r_build = cell_compile_and_load!(arena, src_n0, src_n1, target_slot);
-        console_print_qword!(console, STR_RES_TAG_0, 5);
-        console_print_dec!(console, r_build);
-        console_newline!(console);
-        ret 0;
-    ]
-
-    console_print_qword!(console, STR_UNKNOWN_CMD_0, 8);
-    console_print_qword!(console, STR_UNKNOWN_CMD_1, 8);
-    console_print_qword!(console, STR_UNKNOWN_CMD_2, 8);
-    console_print_qword!(console, STR_UNKNOWN_CMD_3, 3);
-    console_newline!(console);
-    ret 0;
+    ret shell_dispatch_cell!(arena, buf, len);
 ]
 
 fn shell_handle_scancode!(arena, scratch, scancode) [

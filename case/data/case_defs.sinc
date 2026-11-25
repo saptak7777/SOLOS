@@ -58,4 +58,10 @@ const FILE_SINC_SAFE_0       = 2241153230180917804; // "sinc.saf"
 const FILE_SINC_SAFE_1       = 30;                  // "e"
 const FILE_APP_TRG_0         = 9054675775596826;    // "app.trg"
 const FILE_APP_TRG_1         = 0;
+const FILE_LS_SAFE_0         = 8478446585719845;    // "ls.safe"
+const FILE_CAT_SAFE_0        = 2170482325944343068; // "cat.safe"
+const FILE_RM_SAFE_0         = 8478446585718315;    // "rm.safe"
+const FILE_BUILD_SAFE_0      = 1886160645580271131; // "build.sa"
+const FILE_BUILD_SAFE_1      = 7711;                // "fe"
+const CASE_SAFE_EXT_PACKED   = 129370828029;        // ".safe" (5 TRG bytes)
 

@@ -18,7 +18,6 @@ deps [
     lit/sys/thunks.sinc;
     lit/sys/runner.sinc;
     lit/sys/slot_runner.sinc;
-    minit/data/minit_defs.sinc;
 ]
 
 flags [

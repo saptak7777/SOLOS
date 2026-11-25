@@ -34,3 +34,6 @@ const PMM_LENS_BITMAP_BASE = 0;
 const PMM_LENS_MAX_PAGE    = 1;
 const PMM_LENS_NUM_WORDS   = 2;
 const PMM_LENS_FREE_PAGES  = 3;
+
+// Shared Meta-Buffer Scratch Partition Offsets
+const META_CLI_ARGS_OFF    = 192;

@@ -1,0 +1,33 @@
+// ==========================================
+// coreutils/build/build.staff
+// On-Demand Live-on-Time Compiler Utility Cell Manifest
+// ==========================================
+
+artifact build [
+    target = x86_64_none;
+    type   = bin;
+]
+
+deps [
+    spine/data/abi_defs.sinc;
+    spine/data/cli_defs.sinc;
+    spine/pure/cmd_line.sinc;
+    lit/data/lit_defs.sinc;
+    lit/pure/slots.sinc;
+    case/data/case_defs.sinc;
+    case/pure/case.sinc;
+    case/sys/case_read.sinc;
+    spine/sys/sinc_client.sinc;
+    shark/data/console_defs.sinc;
+    shark/pure/math.sinc;
+    shark/sys/console.sinc;
+]
+
+driver [
+    coreutils/build/sys/entry.sinc;
+]
+
+flags [
+    optimize = 3;
+    heap     = 1000000000;
+]

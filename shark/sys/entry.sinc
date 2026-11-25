@@ -82,6 +82,12 @@ fn console_render_telemetry!(state_ptr, cpu_caps, ram_count, storage_bar, pmm) [
     ret 0;
 ]
 
+fn kernel_halt_err!(code) [
+    io_out32!(TRG_DEBUG_PORT, code);
+    cpu_halt!();
+    ret 1;
+]
+
 fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
     width = (dims >> 32) & 4294967295;
     height = dims & 4294967295;
@@ -94,6 +100,7 @@ fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
     // 2. Hardware PMM Bring-up
     pmm = pmm_init!(ram_tape, ram_count);
     if (pmm == 0) [
+        cpu_halt!();
         ret 1;
     ]
 
@@ -103,8 +110,7 @@ fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
     fb_pages = (fb_bytes + 4095) >> 12;
     backbuffer = pmm_alloc_contiguous!(pmm, fb_pages);
     if (backbuffer == 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_CONSOLE_OOM);
-        ret 1;
+        ret kernel_halt_err!(ERR_CONSOLE_OOM);
     ]
 
     state_ptr = bss_base + 25088;
@@ -127,8 +133,7 @@ fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
     if ((cpu_caps & 2) != 0) [
         nvme = nvme_init!(storage_bar, pmm);
         if ((nvme == 0) | (nvme_create_io_queues!(nvme, pmm) != 0)) [
-            io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
-            ret 1;
+            ret kernel_halt_err!(ERR_NVME_TIMEOUT);
         ]
     ]
 
@@ -174,36 +179,30 @@ fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
     if (nvme != 0) [
         tbl_buf = pmm_alloc_page!(pmm);
         if (tbl_buf == 0) [
-            io_out32!(TRG_DEBUG_PORT, ERR_LIT_LOAD);
-            ret 1;
+            ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         if (nvme_rw_sectors!(nvme, 0, CASE_SB_LBA, 8, tbl_buf) != 0) [
             pmm_free_page!(pmm, tbl_buf);
-            io_out32!(TRG_DEBUG_PORT, ERR_LIT_LOAD);
-            ret 1;
+            ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         if ((tbl_buf@[CASE_SB_LENS_MAGIC] != CASE_MAGIC) | (tbl_buf@[CASE_SB_LENS_VER] != CASE_VERSION)) [
             pmm_free_page!(pmm, tbl_buf);
-            io_out32!(TRG_DEBUG_PORT, ERR_LIT_LOAD);
-            ret 1;
+            ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         if (nvme_rw_sectors!(nvme, 0, CASE_TABLE_LBA, 8, tbl_buf) != 0) [
             pmm_free_page!(pmm, tbl_buf);
-            io_out32!(TRG_DEBUG_PORT, ERR_LIT_LOAD);
-            ret 1;
+            ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         m_idx = case_lookup(tbl_buf, FILE_MINIT_SAFE_0, FILE_MINIT_SAFE_1);
         if (m_idx < 0) [
             pmm_free_page!(pmm, tbl_buf);
-            io_out32!(TRG_DEBUG_PORT, ERR_LIT_LOAD);
-            ret 1;
+            ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         m_base = m_idx << 3;
         m_meta = tbl_buf@[(m_base + CASE_LENS_META)];
         if (case_entry_type(m_meta) != CASE_TYPE_SAFE) [
             pmm_free_page!(pmm, tbl_buf);
-            io_out32!(TRG_DEBUG_PORT, ERR_LIT_LOAD);
-            ret 1;
+            ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         m_lba  = tbl_buf@[(m_base + CASE_LENS_START_PG)] << 3;
         m_secs = case_entry_pages(m_meta) << 3;
@@ -212,17 +211,15 @@ fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
 
         r_load = lit_slot_load!(arena_ptr, 0, m_lba, m_secs, m_hash);
         if (r_load != LIT_EXIT_OK) [
-            io_out32!(TRG_DEBUG_PORT, ERR_LIT_LOAD);
-            ret 1;
+            ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
 
         minit_ret = lit_slot_call!(arena_ptr, 0, arena_ptr);
         lit_slot_unload!(arena_ptr, 0);
         free_after = pmm@[PMM_LENS_FREE_PAGES];
 
-        if ((minit_ret != MINIT_PASS_CODE) | ((free_after + meta_buf@[3]) != free_before)) [
-            io_out32!(TRG_DEBUG_PORT, ERR_LIT_PARITY);
-            ret 1;
+        if ((minit_ret != 0) | ((free_after + meta_buf@[3]) != free_before)) [
+            ret kernel_halt_err!(ERR_LIT_PARITY);
         ]
     ]
 

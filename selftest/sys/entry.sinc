@@ -267,6 +267,300 @@ fn test_sinc_compiler!(arena) [
     ret 0;
 ]
 
+fn test_coreutils!(arena) [
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, FILE_BUILD_SAFE_0, FILE_BUILD_SAFE_1, ext_buf) != 0) [
+        ret 31;
+    ]
+    if (case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_SAFE) [
+        ret 31;
+    ]
+
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    app_slot = slot_find_free(table);
+    build_slot = slot_find_free_high(table);
+    if ((app_slot < 1) | (!(app_slot < 10)) | (build_slot < 32)) [
+        ret 32;
+    ]
+
+    lba = ext_buf@[CASE_EXT_PG] << 3;
+    secs = ext_buf@[CASE_EXT_PAGES] << 3;
+    hash_val = ext_buf@[CASE_EXT_HASH];
+    if (exocall!(arena, EXOCALL_SLOT_LOAD, build_slot, lba, secs, hash_val) != LIT_EXIT_OK) [
+        ret 33;
+    ]
+
+    arg_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if (arg_buf == 0) [
+        exocall!(arena, EXOCALL_SLOT_UNLOAD, build_slot, 0, 0, 0);
+        ret 34;
+    ]
+    arg_buf@[0] = -1143866828831250150;
+    arg_buf@[1] = 52 + app_slot;
+
+    cli = arena@[ARENA_LENS_META_BUF] + META_CLI_ARGS_OFF;
+    cli@[0] = arg_buf;
+    cli@[1] = 9;
+
+    b_res = exocall!(arena, EXOCALL_SLOT_CALL, build_slot, arena, 0, 0);
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, build_slot, 0, 0, 0);
+    cli@[0] = 0;
+    cli@[1] = 0;
+    exocall!(arena, EXOCALL_PMM_FREE, arg_buf, 1, 0, 0);
+
+    if (b_res != 0) [
+        ret 35;
+    ]
+    if (slot_is_occupied(table, app_slot) == 0) [
+        ret 36;
+    ]
+    app_val = exocall!(arena, EXOCALL_SLOT_CALL, app_slot, 0, 0, 0);
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, app_slot, 0, 0, 0);
+    if (app_val != 77) [
+        ret 37;
+    ]
+    ret 0;
+]
+
+fn battle_tamper_hash!(arena) [
+    p0 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p0, 1, 0, 0);
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    t_slot = slot_find_free(table);
+    if (t_slot < 1) [
+        ret 101;
+    ]
+
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, FILE_V1_SAFE_0, 0, ext_buf) != 0) [
+        ret 102;
+    ]
+    pg_v1    = ext_buf@[CASE_EXT_PG];
+    pages_v1 = ext_buf@[CASE_EXT_PAGES];
+    bytes_v1 = ext_buf@[CASE_EXT_BYTES];
+    hash_v1  = ext_buf@[CASE_EXT_HASH];
+    lba_v1   = pg_v1 << 3;
+    secs_v1  = pages_v1 << 3;
+
+    r_nvme = exocall!(arena, EXOCALL_SLOT_LOAD, t_slot, lba_v1, secs_v1, hash_v1 + 1);
+    if ((r_nvme != LIT_ERR_BAD_HASH) | (slot_is_occupied(table, t_slot) != 0)) [
+        ret 103;
+    ]
+
+    mem_buf = exocall!(arena, EXOCALL_PMM_ALLOC, pages_v1, 0, 0, 0);
+    if (mem_buf == 0) [
+        ret 104;
+    ]
+    if (case_rw_pages!(arena, 0, pg_v1, pages_v1, mem_buf) != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, mem_buf, pages_v1, 0, 0);
+        ret 105;
+    ]
+    mem_buf@[4] = mem_buf@[4] + 1;
+    r_mem = exocall!(arena, EXOCALL_SLOT_LOAD_MEM, t_slot, mem_buf, bytes_v1, hash_v1);
+    exocall!(arena, EXOCALL_PMM_FREE, mem_buf, pages_v1, 0, 0);
+    if ((r_mem != LIT_ERR_BAD_HASH) | (slot_is_occupied(table, t_slot) != 0)) [
+        ret 106;
+    ]
+
+    p1 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p1, 1, 0, 0);
+    if (p1 != p0) [
+        ret 107;
+    ]
+    ret 0;
+]
+
+fn battle_cow_free_bufs!(arena, wbuf, rbuf, err) [
+    if (wbuf != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, wbuf, 3, 0, 0);
+    ]
+    if (rbuf != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, rbuf, 3, 0, 0);
+    ]
+    ret err;
+]
+
+fn battle_cow_adversarial!(arena) [
+    p0 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p0, 1, 0, 0);
+    wbuf = exocall!(arena, EXOCALL_PMM_ALLOC, 3, 0, 0, 0);
+    rbuf = exocall!(arena, EXOCALL_PMM_ALLOC, 3, 0, 0, 0);
+    if ((wbuf == 0) | (rbuf == 0)) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 110);
+    ]
+    loop (z:1536 = 0 .. 1536) [
+        wbuf@[z] = 0;
+        rbuf@[z] = 0;
+    ]
+    wbuf@[0]    = 111111;
+    wbuf@[600]  = 222222;
+    wbuf@[1200] = 333333;
+
+    if (case_write_file!(arena, CASE_TYPE_DATA, 891298331, 0, wbuf, 10000) != 0) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 111);
+    ]
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, 891298331, 0, ext_buf) != 0) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 112);
+    ]
+    pg_big    = ext_buf@[CASE_EXT_PG];
+    pages_big = ext_buf@[CASE_EXT_PAGES];
+    if ((pages_big != 3) | (case_rw_pages!(arena, 0, pg_big, 3, rbuf) != 0)) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 113);
+    ]
+    if ((rbuf@[0] != 111111) | (rbuf@[600] != 222222) | (rbuf@[1200] != 333333)) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 114);
+    ]
+
+    wbuf@[0] = 444444;
+    if (case_write_file!(arena, CASE_TYPE_DATA, 841425453, 0, wbuf, 64) != 0) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 115);
+    ]
+    if (case_find_artifact!(arena, 841425453, 0, ext_buf) != 0) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 116);
+    ]
+    pg_tiny1 = ext_buf@[CASE_EXT_PG];
+    hs_tiny1 = ext_buf@[CASE_EXT_HASH];
+    if (case_entry_epoch(ext_buf@[CASE_EXT_META]) != 1) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 117);
+    ]
+
+    w_oom = case_write_file!(arena, CASE_TYPE_DATA, 841425453, 0, wbuf, 4194304);
+    if (!(w_oom < 0)) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 118);
+    ]
+
+    if (case_find_artifact!(arena, 841425453, 0, ext_buf) != 0) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 119);
+    ]
+    if ((ext_buf@[CASE_EXT_PG] != pg_tiny1) | (ext_buf@[CASE_EXT_HASH] != hs_tiny1) | (case_entry_epoch(ext_buf@[CASE_EXT_META]) != 1)) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 120);
+    ]
+    rbuf@[0] = 0;
+    if ((case_rw_pages!(arena, 0, pg_tiny1, 1, rbuf) != 0) | (rbuf@[0] != 444444)) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 121);
+    ]
+
+    if (case_delete_file!(arena, 891298331, 0) != 0) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 122);
+    ]
+    wbuf@[0]   = 555555;
+    wbuf@[600] = 666666;
+    if (case_write_file!(arena, CASE_TYPE_DATA, 908603437, 0, wbuf, 6000) != 0) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 123);
+    ]
+    if (case_find_artifact!(arena, 908603437, 0, ext_buf) != 0) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 124);
+    ]
+    pg_two2 = ext_buf@[CASE_EXT_PG];
+    if ((pg_two2 != pg_big) | (ext_buf@[CASE_EXT_PAGES] != 2)) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 125);
+    ]
+    rbuf@[0]   = 0;
+    rbuf@[600] = 0;
+    if ((case_rw_pages!(arena, 0, pg_two2, 2, rbuf) != 0) | (rbuf@[0] != 555555) | (rbuf@[600] != 666666)) [
+        ret battle_cow_free_bufs!(arena, wbuf, rbuf, 126);
+    ]
+
+    d_tiny = case_delete_file!(arena, 841425453, 0);
+    d_two2 = case_delete_file!(arena, 908603437, 0);
+    battle_cow_free_bufs!(arena, wbuf, rbuf, 0);
+    p1 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p1, 1, 0, 0);
+    if ((d_tiny != 0) | (d_two2 != 0) | (p1 != p0)) [
+        ret 127;
+    ]
+    ret 0;
+]
+
+fn battle_type_slot_guards!(arena) [
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    s_free = slot_find_free(table);
+    if (s_free < 1) [
+        ret 130;
+    ]
+
+    r_type = cell_compile_and_load!(arena, FILE_V1_SAFE_0, 0, s_free);
+    if ((r_type != 14) | (slot_is_occupied(table, s_free) != 0)) [
+        ret 131;
+    ]
+
+    if (slot_is_occupied(table, 1) == 0) [
+        ret 132;
+    ]
+    r_occ = cell_compile_and_load!(arena, FILE_APP_TRG_0, FILE_APP_TRG_1, 1);
+    if (r_occ != 17) [
+        ret 133;
+    ]
+
+    r_oob = cell_compile_and_load!(arena, FILE_APP_TRG_0, FILE_APP_TRG_1, 64);
+    if (r_oob != 16) [
+        ret 134;
+    ]
+    ret 0;
+]
+
+fn battle_cell_abort_unwind!(arena) [
+    p0 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p0, 1, 0, 0);
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    s_free = slot_find_free(table);
+    if ((s_free < 1) | (!(s_free < 10))) [
+        ret 140;
+    ]
+
+    r_bad1 = cell_compile_and_load!(arena, 2317996998753327643, 0, s_free);
+    if ((r_bad1 != 20) | (slot_is_occupied(table, s_free) != 0)) [
+        ret 141;
+    ]
+
+    r_bad2 = cell_compile_and_load!(arena, 2317996998770104859, 0, s_free);
+    if ((r_bad2 != 8) | (slot_is_occupied(table, s_free) != 0)) [
+        ret 142;
+    ]
+
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, FILE_BUILD_SAFE_0, FILE_BUILD_SAFE_1, ext_buf) != 0) [
+        ret 143;
+    ]
+    build_slot = slot_find_free_high(table);
+    if (build_slot < 32) [
+        ret 144;
+    ]
+    if (exocall!(arena, EXOCALL_SLOT_LOAD, build_slot, ext_buf@[CASE_EXT_PG] << 3, ext_buf@[CASE_EXT_PAGES] << 3, ext_buf@[CASE_EXT_HASH]) != LIT_EXIT_OK) [
+        ret 145;
+    ]
+    arg_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if (arg_buf == 0) [
+        exocall!(arena, EXOCALL_SLOT_UNLOAD, build_slot, 0, 0, 0);
+        ret 146;
+    ]
+    arg_buf@[0] = -1143866828831250150;
+    arg_buf@[1] = 52 + s_free;
+
+    cli = arena@[ARENA_LENS_META_BUF] + META_CLI_ARGS_OFF;
+    cli@[0] = arg_buf;
+    cli@[1] = 9;
+
+    b_res = exocall!(arena, EXOCALL_SLOT_CALL, build_slot, arena, 0, 0);
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, build_slot, 0, 0, 0);
+    cli@[0] = 0;
+    cli@[1] = 0;
+    exocall!(arena, EXOCALL_PMM_FREE, arg_buf, 1, 0, 0);
+
+    if ((b_res != 0) | (slot_is_occupied(table, s_free) == 0)) [
+        ret 147;
+    ]
+    app_val = exocall!(arena, EXOCALL_SLOT_CALL, s_free, 0, 0, 0);
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, s_free, 0, 0, 0);
+    p1 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p1, 1, 0, 0);
+    if ((app_val != 77) | (p1 != p0)) [
+        ret 148;
+    ]
+    ret 0;
+]
+
 fn main!(arena) [
     if (arena == 0) [
         ret 11;
@@ -304,6 +598,21 @@ fn main!(arena) [
     ]
     if (test_sinc_compiler!(arena) != 0) [
         ret 14;
+    ]
+    if (test_coreutils!(arena) != 0) [
+        ret 15;
+    ]
+    if (battle_tamper_hash!(arena) != 0) [
+        ret 16;
+    ]
+    if (battle_cow_adversarial!(arena) != 0) [
+        ret 17;
+    ]
+    if (battle_type_slot_guards!(arena) != 0) [
+        ret 18;
+    ]
+    if (battle_cell_abort_unwind!(arena) != 0) [
+        ret 19;
     ]
 
     ret 0;

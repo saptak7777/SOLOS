@@ -23,15 +23,8 @@ const CMD_LOAD                 = 8;
 const CMD_CALL                 = 9;
 const CMD_SWAP                 = 10;
 const CMD_UNLOAD               = 11;
-const CMD_LS                   = 12;
-const CMD_CAT                  = 13;
-const CMD_RM                   = 14;
-const CMD_BUILD                = 15;
 
 // TRG Command Matching QWORDs
-const STR_CMD_LS_0             = 11301;            // "ls" (len 2)
-const STR_CMD_RM_0             = 9771;             // "rm" (len 2)
-const STR_CMD_CAT_0            = 2955804;          // "cat" (len 3)
 const STR_CMD_MEM_0            = 2498086;          // "mem" (len 3)
 const STR_CMD_HELP_0           = 690298401;        // "help" (len 4)
 const STR_CMD_TIME_0           = 505815597;        // "time" (len 4)
@@ -39,7 +32,6 @@ const STR_CMD_QUIT_0           = 757214762;        // "quit" (len 4)
 const STR_CMD_LOAD_0           = 488253477;        // "load" (len 4)
 const STR_CMD_CALL_0           = 623188508;        // "call" (len 4)
 const STR_CMD_SWAP_0           = 689582124;        // "swap" (len 4)
-const STR_CMD_BUILD_0          = 125177048603;     // "build" (len 5)
 const STR_CMD_SLOTS_0          = 189736166700;     // "slots" (len 5)
 const STR_CMD_CLEAR_0          = 185121776924;     // "clear" (len 5)
 const STR_CMD_UNLOAD_0         = 31998179878702;   // "unload" (len 6)
@@ -70,22 +62,7 @@ const STR_PIT_TICKS_1          = 15792914;             // "S: " (len 3)
 const STR_SLOT_TAG_0           = 1031111838482;        // "SLOT " (len 5)
 const STR_HASH_TAG_0           = 67830002195892208;    // " HASH: " (len 7)
 const STR_PAGES_TAG_0          = 264961129844720;      // " PGS: " (len 6)
-const STR_FAIL_TAG_0           = 264961012531205;      // "FAIL: " (len 6)
-const STR_RES_TAG_0            = 1035004412945;        // "RES: " (len 5)
 const STR_UNKNOWN_CMD_0        = -1149238080305492716; // "UNKNOWN " (len 8)
 const STR_UNKNOWN_CMD_1        = -215314063330374142;  // "COMMAND." (len 8)
 const STR_UNKNOWN_CMD_2        = 2445730592513856496;  // " TYPE: h" (len 8)
 const STR_UNKNOWN_CMD_3        = 2696478;              // "elp" (len 3)
-
-// CASE FS Shell UI String Constants
-const STR_FS_DIR_HEADER_0      = 1373880392185151490;  // "CASE ART" (len 8)
-const STR_FS_DIR_HEADER_1      = 5611988986103048;     // "IFACT TA" (len 8)
-const STR_FS_DIR_HEADER_2      = 4211346177;           // "BLE:" (len 4)
-const STR_FS_PG_TAG_0          = 1035003629552;        // " PG: " (len 5)
-const STR_FS_TY_TAG_0          = 1035004810224;        // " TY: " (len 5)
-const STR_FS_EP_TAG_0          = 1035004216560;        // " EP: " (len 5)
-const STR_FS_SIZE_TAG_0        = -1082251476742962704; // " BYTES: " (len 8)
-const STR_FS_NOT_FOUND_0       = 1373050260905723909;  // "FILE NOT" (len 8)
-const STR_FS_NOT_FOUND_1       = 3354705921520;        // " FOUND" (len 6)
-const STR_FS_RM_OK_0           = 865836750919632901;   // "FILE REM" (len 8)
-const STR_FS_RM_OK_1           = 50599182;             // "OVED" (len 4)

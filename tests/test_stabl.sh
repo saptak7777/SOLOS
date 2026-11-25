@@ -62,9 +62,13 @@ cp "$BUILD_DIR/BOOTX64.EFI" "$ESP_DIR/EFI/BOOT/BOOTX64.EFI"
 # Compile Hardware Invariant Proof Cell (selftest.safe at LBA 200)
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/selftest/build.staff" "$BUILD_DIR/selftest.safe"
 
-# Compile resident shell, service supervisor, and bare-metal compiler cell
+# Compile resident shell, service supervisor, coreutils, and bare-metal compiler cell
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/lit_shell/build.staff" "$BUILD_DIR/lit_shell.safe"
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/minit/build.staff" "$BUILD_DIR/minit.safe"
+"$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/ls/build.staff" "$BUILD_DIR/ls.safe"
+"$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/cat/build.staff" "$BUILD_DIR/cat.safe"
+"$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/rm/build.staff" "$BUILD_DIR/rm.safe"
+"$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/build/build.staff" "$BUILD_DIR/build.safe"
 
 SINC_WS="$BUILD_DIR/sinc_cell_ws"
 rm -rf "$SINC_WS"
@@ -90,6 +94,9 @@ open(p, 'w').write(s)
 
 printf 'fn main() [\n    ret 77;\n]\n' > "$BUILD_DIR/app.sinc"
 "$ROOT_DIR/bin/trg_encode" "$BUILD_DIR/app.sinc" "$BUILD_DIR/app.trg"
+python3 -c "open('$BUILD_DIR/bad1.trg', 'wb').write(b'BAD1' * 20)"
+printf 'fn main() [\n    ret nope;\n]\n' > "$BUILD_DIR/bad2.sinc"
+"$ROOT_DIR/bin/trg_encode" "$BUILD_DIR/bad2.sinc" "$BUILD_DIR/bad2.trg"
 
 # Seed CASE 4 KB Page-Native CoW Filesystem on $DISK_IMG (SB=Pg16, Bitmap=Pg17, Table=Pg18, Data=Pg25+)
 python3 -c "
@@ -119,7 +126,13 @@ with open('$DISK_IMG', 'r+b') as f:
     minit_data    = open('$BUILD_DIR/minit.safe', 'rb').read()
     shell_data    = open('$BUILD_DIR/lit_shell.safe', 'rb').read()
     sinc_data     = open('$BUILD_DIR/sinc.safe', 'rb').read()
+    ls_data       = open('$BUILD_DIR/ls.safe', 'rb').read()
+    cat_data      = open('$BUILD_DIR/cat.safe', 'rb').read()
+    rm_data       = open('$BUILD_DIR/rm.safe', 'rb').read()
+    build_data    = open('$BUILD_DIR/build.safe', 'rb').read()
     app_trg_data  = open('$BUILD_DIR/app.trg', 'rb').read()
+    bad1_trg_data = open('$BUILD_DIR/bad1.trg', 'rb').read()
+    bad2_trg_data = open('$BUILD_DIR/bad2.trg', 'rb').read()
 
     total_pages = 512
     sb = bytearray(4096)
@@ -142,7 +155,13 @@ with open('$DISK_IMG', 'r+b') as f:
         (1, 1886160714249740838, 7711, minit_data),
         (1, 2674611705646752293, 33118931975461, shell_data),
         (1, 2241153230180917804, 30, sinc_data),
+        (1, 8478446585719845, 0, ls_data),
+        (1, 2170482325944343068, 0, cat_data),
+        (1, 8478446585718315, 0, rm_data),
+        (1, 1886160645580271131, 7711, build_data),
         (2, 9054675775596826, 0, app_trg_data),
+        (2, 2317996998753327643, 0, bad1_trg_data),
+        (2, 2317996998770104859, 0, bad2_trg_data),
     ]
     next_pg = 25
     for i, (ty, q0, q1, data) in enumerate(specs):
@@ -392,12 +411,13 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Gate 12: Cold-Boot Latency Gate (RDTSC / Boot < 10 ms STABL execution)
+# Gate 12: Cold-Boot Latency Gate (RDTSC / Boot < 10 ms STABL, < 1200 ms total)
 # ------------------------------------------------------------------------------
-BOOT_MS=$(python3 -c "
+set +e
+BOOT_OUT=$(python3 -c "
 import subprocess, time
 t0 = time.perf_counter()
-subprocess.run([
+r = subprocess.run([
     '$QEMU', '-enable-kvm', '-cpu', 'host',
     '-bios', '$OVMF', '-net', 'none',
     '-drive', 'format=raw,file=fat:rw:$ESP_DIR',
@@ -407,9 +427,19 @@ subprocess.run([
     '-display', 'none', '-no-reboot'
 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 t1 = time.perf_counter()
-print(f'{(t1 - t0)*1000:.1f}')
+ms = (t1 - t0) * 1000.0
+print(f'{r.returncode}:{ms:.1f}')
+raise SystemExit(0 if (r.returncode == 85 and ms < 1200.0) else 1)
 ")
-pass "Gate 12: Cold-Boot Latency Gate (Live OVMF Boot < 1s)" "${BOOT_MS} ms total (STABL < 10 ms / < 20M cycles)"
+BOOT_STATUS=$?
+set -e
+BOOT_RC="${BOOT_OUT%%:*}"
+BOOT_MS="${BOOT_OUT##*:}"
+if [[ $BOOT_STATUS -eq 0 ]]; then
+    pass "Gate 12: Cold-Boot Latency Gate (Live OVMF Boot < 1.2s)" "${BOOT_MS} ms total (exit $BOOT_RC, STABL < 10 ms)"
+else
+    fail "Gate 12: Cold-Boot Latency Gate (Live OVMF Boot < 1.2s)" "${BOOT_MS} ms total (exit $BOOT_RC, limit 1200.0 ms)"
+fi
 
 # ------------------------------------------------------------------------------
 # Gate 13: SHARK Flat 64-Bit Bitmap PMM & Contiguous Multi-Page Allocation

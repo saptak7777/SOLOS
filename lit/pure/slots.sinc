@@ -22,16 +22,25 @@ fn slot_get_hash(table, slot_id) [
     ret table@[idx];
 ]
 
-fn slot_find_free(table) [
+fn slot_find_free_dir(table, start_slot, step, count) [
     slot_res = -1;
-    loop (s:63 = 1 .. 64) [
+    loop (i:64 = 0 .. count) [
         if (slot_res == -1) [
-            if (slot_is_occupied(table, s) == 0) [
-                slot_res = s;
+            cand = start_slot + (i * step);
+            if (slot_is_occupied(table, cand) == 0) [
+                slot_res = cand;
             ]
         ]
     ]
     ret slot_res;
+]
+
+fn slot_find_free(table) [
+    ret slot_find_free_dir(table, 1, 1, 63);
+]
+
+fn slot_find_free_high(table) [
+    ret slot_find_free_dir(table, 63, -1, 32);
 ]
 
 fn slot_find_by_hash(table, hash_val) [

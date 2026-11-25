@@ -1,0 +1,18 @@
+// ==========================================
+// spine/data/cli_defs.sinc
+// Shared TRG CLI Status & CASE Formatting Constants (Strict Law 15)
+// ==========================================
+
+const STR_FAIL_TAG_0       = 264961012531205;      // "FAIL: " (len 6)
+const STR_RES_TAG_0        = 1035004412945;        // "RES: " (len 5)
+const STR_FS_DIR_HEADER_0  = 1373880392185151490;  // "CASE ART" (len 8)
+const STR_FS_DIR_HEADER_1  = 5611988986103048;     // "IFACT TA" (len 8)
+const STR_FS_DIR_HEADER_2  = 4211346177;           // "BLE:" (len 4)
+const STR_FS_PG_TAG_0      = 1035003629552;        // " PG: " (len 5)
+const STR_FS_TY_TAG_0      = 1035004810224;        // " TY: " (len 5)
+const STR_FS_EP_TAG_0      = 1035004216560;        // " EP: " (len 5)
+const STR_FS_SIZE_TAG_0    = -1082251476742962704; // " BYTES: " (len 8)
+const STR_FS_NOT_FOUND_0   = 1373050260905723909;  // "FILE NOT" (len 8)
+const STR_FS_NOT_FOUND_1   = 3354705921520;        // " FOUND" (len 6)
+const STR_FS_RM_OK_0       = 865836750919632901;   // "FILE REM" (len 8)
+const STR_FS_RM_OK_1       = 50599182;             // "OVED" (len 4)

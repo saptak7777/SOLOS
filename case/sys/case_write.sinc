@@ -1,53 +1,7 @@
 // ==========================================
-// case/sys/case_io.sinc
-// Shared Exocall CASE Page I/O & Atomic CoW Engine (Strict Law 15)
+// case/sys/case_write.sinc
+// Atomic CoW CASE Page Writer & Deleter (Strict Law 15)
 // ==========================================
-
-extern fn exocall!();
-
-fn case_rw_pages!(arena, is_write, start_pg, num_pages, buf) [
-    if (num_pages == 0) [
-        ret 0;
-    ]
-    err = 0;
-    loop (c:512 = 0 .. num_pages) [
-        if (err == 0) [
-            cur_lba = (start_pg + c) << 3;
-            ptr = buf + (c << 12);
-            r = exocall!(arena, EXOCALL_NVME_RW, is_write, cur_lba, 8, ptr);
-            if (r != 0) [
-                err = r;
-            ]
-        ]
-    ]
-    ret err;
-]
-
-fn case_find_artifact!(arena, name_0, name_1, out_meta) [
-    tbl_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
-    if (tbl_buf == 0) [
-        ret -1;
-    ]
-    r_tbl = exocall!(arena, EXOCALL_NVME_RW, 0, CASE_TABLE_LBA, 8, tbl_buf);
-    if (r_tbl != 0) [
-        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
-        ret -2;
-    ]
-    idx = case_lookup(tbl_buf, name_0, name_1);
-    if (idx < 0) [
-        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
-        ret -3;
-    ]
-    base = idx << 3;
-    meta = tbl_buf@[(base + CASE_LENS_META)];
-    out_meta@[CASE_EXT_PG]    = tbl_buf@[(base + CASE_LENS_START_PG)];
-    out_meta@[CASE_EXT_PAGES] = case_entry_pages(meta);
-    out_meta@[CASE_EXT_BYTES] = tbl_buf@[(base + CASE_LENS_BYTES)];
-    out_meta@[CASE_EXT_HASH]  = tbl_buf@[(base + CASE_LENS_HASH)];
-    out_meta@[CASE_EXT_META]  = meta;
-    exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
-    ret 0;
-]
 
 fn case_free_meta!(arena, sb_buf, bmp_buf, tbl_buf) [
     if (sb_buf != 0) [
@@ -183,4 +137,3 @@ fn case_delete_file!(arena, name_0, name_1) [
     case_flush_free_meta!(arena, sb_buf, bmp_buf, tbl_buf);
     ret 0;
 ]
-

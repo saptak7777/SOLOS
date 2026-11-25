@@ -11,5 +11,3 @@ const SVC_LENS_TOKEN       = 3;
 const SVC_POLICY_CRITICAL  = 0;
 const SVC_POLICY_ONESHOT   = 1;
 
-const MINIT_PASS_CODE      = 2048;
-

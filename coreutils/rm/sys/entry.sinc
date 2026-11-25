@@ -1,0 +1,28 @@
+// ==========================================
+// coreutils/rm/sys/entry.sinc
+// On-Demand CASE Artifact Deleter Cell (Strict Law 15)
+// ==========================================
+
+fn main!(arena) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    cli = arena@[ARENA_LENS_META_BUF] + META_CLI_ARGS_OFF;
+    buf = cli@[0];
+    len = cli@[1];
+    if ((buf == 0) | (len == 0)) [
+        ret 1;
+    ]
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (shell_parse_name!(buf, 0, len, ext_buf) == 0) [
+        ret 1;
+    ]
+    if (case_delete_file!(arena, ext_buf@[0], ext_buf@[1]) != 0) [
+        console_print_qword!(console, STR_FS_NOT_FOUND_0, 8);
+        console_print_qword!(console, STR_FS_NOT_FOUND_1, 6);
+        console_newline!(console);
+        ret 0;
+    ]
+    console_print_qword!(console, STR_FS_RM_OK_0, 8);
+    console_print_qword!(console, STR_FS_RM_OK_1, 4);
+    console_newline!(console);
+    ret 0;
+]

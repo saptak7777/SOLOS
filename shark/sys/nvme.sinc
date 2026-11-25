@@ -12,6 +12,28 @@ fn nvme_ring_doorbell!(nvme, qid, is_cq, val) [
     ret 0;
 ]
 
+fn nvme_wait_csts!(bar, target_bit) [
+    loop (p:2000000 = 0 .. 2000000) [
+        if ((mmio_read32!(bar + NVME_OFF_CSTS) & 1) == target_bit) [
+            ret 0;
+        ]
+    ]
+    ret 1;
+]
+
+fn nvme_wait_cqe!(cq, dw3_idx, exp_phase) [
+    loop (p:50000000 = 0 .. 50000000) [
+        dw3 = cq@[dw3_idx];
+        if (((dw3 >> 48) & 1) == exp_phase) [
+            if (((dw3 >> 49) & 32767) != 0) [
+                ret 2;
+            ]
+            ret 0;
+        ]
+    ]
+    ret 1;
+]
+
 fn nvme_init!(storage_bar, pmm) [
     if (storage_bar == 0) [
         ret 0;
@@ -29,16 +51,7 @@ fn nvme_init!(storage_bar, pmm) [
     csts = mmio_read32!(storage_bar + NVME_OFF_CSTS);
     if ((csts & 1) != 0) [
         mmio_write32!(storage_bar + NVME_OFF_CC, 0);
-        disabled = 0;
-        loop (w:100000 = 0 .. 100000) [
-            if (disabled == 0) [
-                csts_poll = mmio_read32!(storage_bar + NVME_OFF_CSTS);
-                if ((csts_poll & 1) == 0) [
-                    disabled = 1;
-                ]
-            ]
-        ]
-        if (disabled == 0) [
+        if (nvme_wait_csts!(storage_bar, 0) != 0) [
             io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
             ret 0;
         ]
@@ -73,16 +86,7 @@ fn nvme_init!(storage_bar, pmm) [
     mmio_write32!(storage_bar + NVME_OFF_CC, cc_val);
 
     // 6. Poll CSTS.RDY == 1
-    enabled = 0;
-    loop (p:100000 = 0 .. 100000) [
-        if (enabled == 0) [
-            csts_ready = mmio_read32!(storage_bar + NVME_OFF_CSTS);
-            if ((csts_ready & 1) != 0) [
-                enabled = 1;
-            ]
-        ]
-    ]
-    if (enabled == 0) [
+    if (nvme_wait_csts!(storage_bar, 1) != 0) [
         io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
         ret 0;
     ]
@@ -110,10 +114,10 @@ fn nvme_create_io_queues!(nvme, pmm) [
 
     // 1. Submit Admin Create I/O CQ (Opcode 5)
     asq = nvme@[NVME_LENS_ADMIN_SQ];
+    acq = nvme@[NVME_LENS_ADMIN_CQ];
     cid1 = nvme@[NVME_LENS_CID_COUNTER];
     nvme@[NVME_LENS_CID_COUNTER] = cid1 + 1;
 
-    // 64-byte SQE at entry 0
     asq@[0] = NVME_OP_ADMIN_CREATE_IO_CQ | (cid1 << 16);
     asq@[1] = 0;
     asq@[2] = 0;
@@ -125,34 +129,21 @@ fn nvme_create_io_queues!(nvme, pmm) [
 
     nvme_ring_doorbell!(nvme, 0, 0, 1);
 
-    // Poll Admin CQ for completion
-    acq = nvme@[NVME_LENS_ADMIN_CQ];
-    cq_done = 0;
-    loop (p1:100000 = 0 .. 100000) [
-        if (cq_done == 0) [
-            cqe_dw3 = acq@[1]; // Entry 0: QWORD 1 (DW2 | (DW3 << 32))
-            phase = (cqe_dw3 >> 48) & 1;
-            if (phase == 1) [
-                status = (cqe_dw3 >> 49) & 32767;
-                if (status != 0) [
-                    io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
-                    ret 1;
-                ]
-                nvme_ring_doorbell!(nvme, 0, 1, 1);
-                cq_done = 1;
-            ]
-        ]
+    r_cq = nvme_wait_cqe!(acq, 1, 1);
+    if (r_cq == 2) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
+        ret 1;
     ]
-    if (cq_done == 0) [
+    if (r_cq != 0) [
         io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
         ret 1;
     ]
+    nvme_ring_doorbell!(nvme, 0, 1, 1);
 
     // 2. Submit Admin Create I/O SQ (Opcode 1)
     cid2 = nvme@[NVME_LENS_CID_COUNTER];
     nvme@[NVME_LENS_CID_COUNTER] = cid2 + 1;
 
-    // 64-byte SQE at entry 1
     asq@[8] = NVME_OP_ADMIN_CREATE_IO_SQ | (cid2 << 16);
     asq@[9] = 0;
     asq@[10] = 0;
@@ -164,26 +155,16 @@ fn nvme_create_io_queues!(nvme, pmm) [
 
     nvme_ring_doorbell!(nvme, 0, 0, 2);
 
-    sq_done = 0;
-    loop (p2:100000 = 0 .. 100000) [
-        if (sq_done == 0) [
-            cqe2_dw3 = acq@[3]; // Entry 1: QWORD 3
-            phase2 = (cqe2_dw3 >> 48) & 1;
-            if (phase2 == 1) [
-                status2 = (cqe2_dw3 >> 49) & 32767;
-                if (status2 != 0) [
-                    io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
-                    ret 1;
-                ]
-                nvme_ring_doorbell!(nvme, 0, 1, 2);
-                sq_done = 1;
-            ]
-        ]
+    r_sq = nvme_wait_cqe!(acq, 3, 1);
+    if (r_sq == 2) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
+        ret 1;
     ]
-    if (sq_done == 0) [
+    if (r_sq != 0) [
         io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
         ret 1;
     ]
+    nvme_ring_doorbell!(nvme, 0, 1, 2);
 
     ret 0;
 ]
@@ -222,31 +203,21 @@ fn nvme_rw_sectors!(nvme, is_write, lba, count, buf) [
     exp_phase = nvme@[NVME_LENS_IO_PHASE];
     cqe_off = (head << 1) + 1;
 
-    rw_done = 0;
-    loop (p:1000000 = 0 .. 1000000) [
-        if (rw_done == 0) [
-            dw3 = iocq@[cqe_off];
-            phase = (dw3 >> 48) & 1;
-            if (phase == exp_phase) [
-                status = (dw3 >> 49) & 32767;
-                if (status != 0) [
-                    io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
-                    ret 4;
-                ]
-                new_head = (head + 1) & 63;
-                if (new_head == 0) [
-                    nvme@[NVME_LENS_IO_PHASE] = 1 ^ exp_phase;
-                ]
-                nvme@[NVME_LENS_IO_CQ_HEAD] = new_head;
-                nvme_ring_doorbell!(nvme, 1, 1, new_head);
-                rw_done = 1;
-            ]
-        ]
+    r_io = nvme_wait_cqe!(iocq, cqe_off, exp_phase);
+    if (r_io == 2) [
+        io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
+        ret 4;
     ]
-    if (rw_done == 0) [
+    if (r_io != 0) [
         io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
         ret 5;
     ]
 
+    new_head = (head + 1) & 63;
+    if (new_head == 0) [
+        nvme@[NVME_LENS_IO_PHASE] = 1 ^ exp_phase;
+    ]
+    nvme@[NVME_LENS_IO_CQ_HEAD] = new_head;
+    nvme_ring_doorbell!(nvme, 1, 1, new_head);
     ret 0;
 ]
