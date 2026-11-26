@@ -20,7 +20,7 @@ deps [
     case/pure/case.sinc;
     case/sys/case_read.sinc;
     shark/data/console_defs.sinc;
-    shark/data/input_defs.sinc;
+    shark/data/ring_defs.sinc;
     shark/pure/math.sinc;
     shark/sys/ring.sinc;
     shark/sys/console.sinc;

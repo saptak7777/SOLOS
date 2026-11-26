@@ -12,8 +12,6 @@
 !bin/sinc.elf
 !bin/staff
 !bin/packager_bin
-!bin/packager_o
-!bin/slim.elf
 
 # 3 Primary Workspace Folders
 /scratch/

@@ -1,6 +1,6 @@
 // ==========================================
-// shark/data/input_defs.sinc
-// SHARK x2APIC, TSC-Deadline & Input Ring Constants
+// shark/data/apic_defs.sinc
+// SHARK x2APIC & TSC-Deadline Timer Constants
 // ==========================================
 
 // x2APIC & TSC-Deadline MSRs
@@ -21,14 +21,8 @@ const APIC_LVT_TSC_DEADLINE = 262144; // 0x40000 (Timer mode = 10b)
 const APIC_VECTOR_TIMER     = 32;
 const APIC_VECTOR_XHCI      = 33;
 
-// Pinned BSS Offsets (ram_tape - 49216)
+// Pinned Timer BSS Offsets (ram_tape - 49216)
 const TIMER_BSS_OFFSET      = 26240;
 const TIMER_LENS_TICKS      = 0;
 const TIMER_LENS_TSC_KHZ    = 1;
-const RING_BSS_OFFSET       = 26368;
 
-// Lock-Free SPSC Ring Buffer Lenses
-const RING_LENS_HEAD        = 0;
-const RING_LENS_TAIL        = 1;
-const RING_LENS_DROPPED     = 3;
-const RING_DATA_BASE        = 4;

@@ -1,0 +1,11 @@
+// ==========================================
+// shark/data/ring_defs.sinc
+// SHARK Lock-Free SPSC Input Ring Constants
+// ==========================================
+
+const RING_BSS_OFFSET   = 26368;
+const RING_LENS_HEAD    = 0;
+const RING_LENS_TAIL    = 1;
+const RING_LENS_DROPPED = 3;
+const RING_DATA_BASE    = 4;
+

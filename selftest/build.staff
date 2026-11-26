@@ -27,7 +27,7 @@ deps [
     minit/pure/dag.sinc;
     shark/data/console_defs.sinc;
     shark/data/cap_defs.sinc;
-    shark/data/input_defs.sinc;
+    shark/data/ring_defs.sinc;
     shark/data/xhci_defs.sinc;
     shark/pure/cap.sinc;
     shark/pure/math.sinc;
