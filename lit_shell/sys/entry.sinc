@@ -108,7 +108,7 @@ fn shell_execute_line!(arena, scratch, buf, len) [
         console_print_qword!(console, STR_HELP_MSG_6, 8);
         console_print_qword!(console, STR_HELP_MSG_7, 8);
         console_print_qword!(console, STR_HELP_MSG_8, 8);
-        console_print_qword!(console, STR_HELP_MSG_9, 1);
+        console_print_qword!(console, STR_HELP_MSG_9, 6);
         console_newline!(console);
         ret 0;
     ]
@@ -129,8 +129,7 @@ fn shell_execute_line!(arena, scratch, buf, len) [
     if (cmd == CMD_TIME) [
         timer = arena@[ARENA_LENS_TIMER];
         ticks = timer@[0];
-        console_print_qword!(console, STR_PIT_TICKS_0, 8);
-        console_print_qword!(console, STR_PIT_TICKS_1, 3);
+        console_print_qword!(console, STR_TIME_TAG_0, 7);
         console_print_dec!(console, ticks);
         console_newline!(console);
         ret 0;

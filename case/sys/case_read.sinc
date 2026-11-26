@@ -24,18 +24,18 @@ fn case_rw_pages!(arena, is_write, start_pg, num_pages, buf) [
 ]
 
 fn case_find_artifact!(arena, name_0, name_1, out_meta) [
-    tbl_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    tbl_buf = exocall!(arena, EXOCALL_PMM_ALLOC, CASE_TABLE_PAGES, 0, 0, 0);
     if (tbl_buf == 0) [
         ret -1;
     ]
-    r_tbl = exocall!(arena, EXOCALL_NVME_RW, 0, CASE_TABLE_LBA, 8, tbl_buf);
+    r_tbl = case_rw_pages!(arena, 0, CASE_TABLE_START_PG, CASE_TABLE_PAGES, tbl_buf);
     if (r_tbl != 0) [
-        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, CASE_TABLE_PAGES, 0, 0);
         ret -2;
     ]
     idx = case_lookup(tbl_buf, name_0, name_1);
     if (idx < 0) [
-        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, CASE_TABLE_PAGES, 0, 0);
         ret -3;
     ]
     base = idx << 3;
@@ -45,6 +45,6 @@ fn case_find_artifact!(arena, name_0, name_1, out_meta) [
     out_meta@[CASE_EXT_BYTES] = tbl_buf@[(base + CASE_LENS_BYTES)];
     out_meta@[CASE_EXT_HASH]  = tbl_buf@[(base + CASE_LENS_HASH)];
     out_meta@[CASE_EXT_META]  = meta;
-    exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, CASE_TABLE_PAGES, 0, 0);
     ret 0;
 ]

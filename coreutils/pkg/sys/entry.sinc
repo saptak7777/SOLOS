@@ -1,0 +1,269 @@
+// ==========================================
+// coreutils/pkg/sys/entry.sinc
+// Sovereign Package Manager Over CASE CoW FS (Strict Law 15)
+// ==========================================
+
+fn pkg_hash_live!(arena, ext_buf, out_hash) [
+    pg        = ext_buf@[CASE_EXT_PG];
+    pages     = ext_buf@[CASE_EXT_PAGES];
+    byte_len  = ext_buf@[CASE_EXT_BYTES];
+    case_hash = ext_buf@[CASE_EXT_HASH];
+    if ((pages < 1) | (byte_len < 0) | (byte_len > (pages << 12))) [
+        ret PKG_ERR_TAMPER;
+    ]
+    buf = exocall!(arena, EXOCALL_PMM_ALLOC, pages, 0, 0, 0);
+    if (buf == 0) [
+        ret PKG_ERR_OOM;
+    ]
+    if (case_rw_pages!(arena, 0, pg, pages, buf) != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, buf, pages, 0, 0);
+        ret PKG_ERR_IO;
+    ]
+    live_hash = case_fnv1a_64(buf, byte_len);
+    exocall!(arena, EXOCALL_PMM_FREE, buf, pages, 0, 0);
+    if (live_hash != case_hash) [
+        ret PKG_ERR_TAMPER;
+    ]
+    out_hash@[0] = live_hash;
+    ret PKG_OK;
+]
+
+fn pkg_load_db!(arena, db_buf, create_if_missing) [
+    loop (z:512 = 0 .. 512) [
+        db_buf@[z] = 0;
+    ]
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    r = case_find_artifact!(arena, FILE_PKG_DB_0, 0, ext_buf);
+    if (r == -3) [
+        if (create_if_missing != 0) [
+            ret PKG_OK;
+        ]
+        ret PKG_ERR_NO_PKG;
+    ]
+    if (r != 0) [
+        ret PKG_ERR_IO;
+    ]
+    if ((case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_DATA) | (ext_buf@[CASE_EXT_PAGES] != 1) | (ext_buf@[CASE_EXT_BYTES] != PKG_DB_BYTES)) [
+        ret PKG_ERR_TAMPER;
+    ]
+    if (case_rw_pages!(arena, 0, ext_buf@[CASE_EXT_PG], 1, db_buf) != 0) [
+        ret PKG_ERR_IO;
+    ]
+    if (case_fnv1a_64(db_buf, PKG_DB_BYTES) != ext_buf@[CASE_EXT_HASH]) [
+        ret PKG_ERR_TAMPER;
+    ]
+    ret PKG_OK;
+]
+
+fn pkg_flush_db!(arena, db_buf) [
+    if (case_write_file!(arena, CASE_TYPE_DATA, FILE_PKG_DB_0, 0, db_buf, PKG_DB_BYTES) != 0) [
+        ret PKG_ERR_IO;
+    ]
+    ret PKG_OK;
+]
+
+fn pkg_print_name!(console, db_buf, base) [
+    ptr = db_buf + (base << 3) + (PKG_LENS_NAME_0 << 3);
+    stopped = 0;
+    loop (i:16 = 0 .. 16) [
+        if (stopped == 0) [
+            ch = ptr@[i * 1];
+            if (ch == 0) [ stopped = 1; ]
+            if (ch != 0) [ console_putc!(console, ch); ]
+        ]
+    ]
+    ret 0;
+]
+
+fn pkg_install_or_upgrade!(arena, buf, len, db_buf, is_upgrade) [
+    idx1 = shell_skip_word(buf, 0, len);
+    name_buf = arena@[ARENA_LENS_META_BUF] + 640;
+    if (shell_parse_name!(buf, idx1, len, name_buf) == 0) [
+        ret PKG_ERR_ARGS;
+    ]
+    n0 = name_buf@[0];
+    n1 = name_buf@[1];
+
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, n0, n1, ext_buf) != 0) [
+        ret PKG_ERR_NO_PKG;
+    ]
+    hash_out = arena@[ARENA_LENS_META_BUF] + 656;
+    hr = pkg_hash_live!(arena, ext_buf, hash_out);
+    if (hr != PKG_OK) [
+        ret hr;
+    ]
+    lr = pkg_load_db!(arena, db_buf, 1 - is_upgrade);
+    if (lr != PKG_OK) [
+        ret lr;
+    ]
+
+    id = pkg_find_by_name(db_buf, n0, n1);
+    old_flags = 0;
+    old_ver = 0;
+    old_deps = 0;
+    if (is_upgrade == 0) [
+        if (!(id < 0)) [ ret PKG_ERR_EXISTS; ]
+        id = pkg_find_free(db_buf);
+        if (id < 0) [ ret PKG_ERR_OOM; ]
+    ] else [
+        if (id < 0) [ ret PKG_ERR_NO_PKG; ]
+        base = id << 3;
+        vf = db_buf@[(base + PKG_LENS_VER_FLAGS)];
+        old_ver   = pkg_ver(vf);
+        old_flags = pkg_flags(vf);
+        old_deps  = db_buf@[(base + PKG_LENS_DEPS)];
+    ]
+
+    idx2 = shell_skip_word(buf, idx1, len);
+    idx3 = shell_skip_word(buf, idx2, len);
+    ver = old_ver + 1;
+    if (idx2 < len) [
+        ver = shell_parse_dec(buf, idx2, len);
+        if (ver < 1) [ ret PKG_ERR_ARGS; ]
+    ]
+    if ((is_upgrade != 0) & (!(ver > old_ver))) [
+        ret PKG_ERR_DOWNGRADE;
+    ]
+
+    deps = old_deps;
+    if (idx3 < len) [
+        deps = shell_parse_dec(buf, idx3, len);
+    ]
+    avail_mask = pkg_installed_mask(db_buf) & (-1 ^ (1 << id));
+    if (pkg_deps_valid(avail_mask, id, deps) == 0) [
+        ret PKG_ERR_BAD_DEP;
+    ]
+
+    pkg_set_record!(db_buf, id, n0, n1, hash_out@[0], deps, ver, old_flags);
+    ret pkg_flush_db!(arena, db_buf);
+]
+
+fn pkg_cmd_remove!(arena, buf, len, db_buf) [
+    idx1 = shell_skip_word(buf, 0, len);
+    name_buf = arena@[ARENA_LENS_META_BUF] + 640;
+    if (shell_parse_name!(buf, idx1, len, name_buf) == 0) [
+        ret PKG_ERR_ARGS;
+    ]
+    n0 = name_buf@[0];
+    n1 = name_buf@[1];
+
+    lr = pkg_load_db!(arena, db_buf, 0);
+    if (lr != PKG_OK) [ ret lr; ]
+
+    id = pkg_find_by_name(db_buf, n0, n1);
+    if (id < 0) [ ret PKG_ERR_NO_PKG; ]
+
+    flags = pkg_flags(db_buf@[((id << 3) + PKG_LENS_VER_FLAGS)]);
+    if ((flags & PKG_FLAG_CORE) != 0) [ ret PKG_ERR_CORE; ]
+    if (pkg_has_dependents(db_buf, id) != 0) [ ret PKG_ERR_HAS_DEP; ]
+
+    pkg_clear_record!(db_buf, id);
+    fr = pkg_flush_db!(arena, db_buf);
+    if (fr != PKG_OK) [ ret fr; ]
+    if (case_delete_file!(arena, n0, n1) != 0) [ ret PKG_ERR_IO; ]
+    ret PKG_OK;
+]
+
+fn pkg_cmd_list!(arena, console, db_buf) [
+    lr = pkg_load_db!(arena, db_buf, 0);
+    if (lr == PKG_ERR_NO_PKG) [
+        console_print_qword!(console, STR_PKG_NONE, 7);
+        console_newline!(console);
+        ret PKG_OK;
+    ]
+    if (lr != PKG_OK) [ ret lr; ]
+
+    loop (i:64 = 0 .. PKG_MAX_RECORDS) [
+        if (pkg_is_installed(db_buf, i) != 0) [
+            base = i << 3;
+            vf = db_buf@[(base + PKG_LENS_VER_FLAGS)];
+            console_print_qword!(console, STR_PKG_ID, 7);
+            console_print_dec!(console, i);
+            console_putc!(console, 240);
+            pkg_print_name!(console, db_buf, base);
+            console_print_qword!(console, STR_PKG_VER, 5);
+            console_print_dec!(console, pkg_ver(vf));
+            console_print_qword!(console, STR_PKG_DEPS, 6);
+            console_print_hex64!(console, db_buf@[(base + PKG_LENS_DEPS)]);
+            console_print_qword!(console, STR_PKG_FLG, 5);
+            console_print_dec!(console, pkg_flags(vf));
+            console_newline!(console);
+        ]
+    ]
+    ret PKG_OK;
+]
+
+fn pkg_cmd_verify!(arena, db_buf) [
+    lr = pkg_load_db!(arena, db_buf, 0);
+    if (lr != PKG_OK) [ ret lr; ]
+
+    inst_mask = pkg_installed_mask(db_buf);
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    hash_out = arena@[ARENA_LENS_META_BUF] + 656;
+
+    loop (i:64 = 0 .. PKG_MAX_RECORDS) [
+        if (pkg_is_installed(db_buf, i) != 0) [
+            base = i << 3;
+            n0 = db_buf@[(base + PKG_LENS_NAME_0)];
+            n1 = db_buf@[(base + PKG_LENS_NAME_1)];
+            deps = db_buf@[(base + PKG_LENS_DEPS)];
+            if (pkg_deps_valid(inst_mask & (-1 ^ (1 << i)), i, deps) == 0) [
+                ret PKG_ERR_BAD_DEP;
+            ]
+            if (case_find_artifact!(arena, n0, n1, ext_buf) != 0) [
+                ret PKG_ERR_NO_PKG;
+            ]
+            hr = pkg_hash_live!(arena, ext_buf, hash_out);
+            if (hr != PKG_OK) [
+                ret hr;
+            ]
+            if (hash_out@[0] != db_buf@[(base + PKG_LENS_HASH)]) [
+                ret PKG_ERR_TAMPER;
+            ]
+        ]
+    ]
+    ret PKG_OK;
+]
+
+fn main!(arena) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    cli = arena@[ARENA_LENS_META_BUF] + META_CLI_ARGS_OFF;
+    buf = cli@[0];
+    len = cli@[1];
+    if ((buf == 0) | (len == 0)) [ ret PKG_ERR_ARGS; ]
+
+    db_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if (db_buf == 0) [ ret PKG_ERR_OOM; ]
+
+    sub = shell_read_word_qw(buf, 0, len);
+    res = PKG_ERR_ARGS;
+    if (sub == CMD_PKG_INSTALL) [
+        res = pkg_install_or_upgrade!(arena, buf, len, db_buf, 0);
+    ]
+    if (sub == CMD_PKG_UPGRADE) [
+        res = pkg_install_or_upgrade!(arena, buf, len, db_buf, 1);
+    ]
+    if (sub == CMD_PKG_REMOVE) [
+        res = pkg_cmd_remove!(arena, buf, len, db_buf);
+    ]
+    if (sub == CMD_PKG_LIST) [
+        res = pkg_cmd_list!(arena, console, db_buf);
+    ]
+    if (sub == CMD_PKG_VERIFY) [
+        res = pkg_cmd_verify!(arena, db_buf);
+    ]
+
+    exocall!(arena, EXOCALL_PMM_FREE, db_buf, 1, 0, 0);
+    if (res == PKG_OK) [
+        if (sub != CMD_PKG_LIST) [
+            console_print_qword!(console, STR_PKG_OK, 7);
+        ]
+    ] else [
+        console_print_qword!(console, STR_PKG_ERR, 8);
+        console_print_dec!(console, res);
+        console_newline!(console);
+    ]
+    ret res;
+]
+

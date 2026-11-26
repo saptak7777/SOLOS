@@ -578,6 +578,236 @@ fn battle_cell_abort_unwind!(arena) [
     ret 0;
 ]
 
+fn test_case_128!(arena) [
+    p0 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p0, 1, 0, 0);
+
+    bmp_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    rd_buf  = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if ((bmp_buf == 0) | (rd_buf == 0)) [
+        if (bmp_buf != 0) [ exocall!(arena, EXOCALL_PMM_FREE, bmp_buf, 1, 0, 0); ]
+        if (rd_buf != 0) [ exocall!(arena, EXOCALL_PMM_FREE, rd_buf, 1, 0, 0); ]
+        ret 21;
+    ]
+    if (exocall!(arena, EXOCALL_NVME_RW, 0, CASE_BITMAP_LBA, 8, bmp_buf) != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, bmp_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, rd_buf, 1, 0, 0);
+        ret 21;
+    ]
+    // Verify pages 0..24 (specifically Pg 19) remain locked in CASE bitmap
+    if (((bmp_buf@[0] & CASE_RESERVED_MASK) != CASE_RESERVED_MASK) | (!(case_mark_pages!(bmp_buf, 19, 1, 0) < 0))) [
+        exocall!(arena, EXOCALL_PMM_FREE, bmp_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, rd_buf, 1, 0, 0);
+        ret 22;
+    ]
+    alloc_pg = case_alloc_pages!(bmp_buf, 512, 1);
+    exocall!(arena, EXOCALL_PMM_FREE, bmp_buf, 1, 0, 0);
+    if (alloc_pg < CASE_DATA_START_PG) [
+        exocall!(arena, EXOCALL_PMM_FREE, rd_buf, 1, 0, 0);
+        ret 22;
+    ]
+
+    // Lookup hi70.dat seeded at entry index 70 (Page 19)
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, 3249943054441456161, 0, ext_buf) != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, rd_buf, 1, 0, 0);
+        ret 23;
+    ]
+    if (case_rw_pages!(arena, 0, ext_buf@[CASE_EXT_PG], 1, rd_buf) != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, rd_buf, 1, 0, 0);
+        ret 23;
+    ]
+    h_ok = (case_fnv1a_64(rd_buf, ext_buf@[CASE_EXT_BYTES]) == ext_buf@[CASE_EXT_HASH]);
+    exocall!(arena, EXOCALL_PMM_FREE, rd_buf, 1, 0, 0);
+    if (h_ok == 0) [
+        ret 24;
+    ]
+
+    p1 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p1, 1, 0, 0);
+    if (p1 != p0) [ ret 25; ]
+    ret 0;
+]
+
+fn test_run_pkg!(arena, pkg_slot, cmd_buf, cmd_len) [
+    cli = arena@[ARENA_LENS_META_BUF] + META_CLI_ARGS_OFF;
+    cli@[0] = cmd_buf;
+    cli@[1] = cmd_len;
+    r = exocall!(arena, EXOCALL_SLOT_CALL, pkg_slot, arena, 0, 0);
+    cli@[0] = 0;
+    cli@[1] = 0;
+    ret r;
+]
+
+fn test_pkg!(arena) [
+    p0 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p0, 1, 0, 0);
+
+    data_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    cmd_buf  = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if ((data_buf == 0) | (cmd_buf == 0)) [
+        if (data_buf != 0) [ exocall!(arena, EXOCALL_PMM_FREE, data_buf, 1, 0, 0); ]
+        if (cmd_buf != 0) [ exocall!(arena, EXOCALL_PMM_FREE, cmd_buf, 1, 0, 0); ]
+        ret 26;
+    ]
+    loop (z:512 = 0 .. 512) [
+        data_buf@[z] = 0;
+        cmd_buf@[z]  = 0;
+    ]
+    data_buf@[0] = 123456789;
+    data_buf@[1] = 987654321;
+
+    n_a0 = 1881938511500682281; // "pkg_a.dat"
+    n_b0 = 1881938515795649577; // "pkg_b.dat"
+    if ((case_write_file!(arena, CASE_TYPE_DATA, n_a0, 45, data_buf, 64) != 0) | (case_write_file!(arena, CASE_TYPE_DATA, n_b0, 45, data_buf, 64) != 0)) [
+        exocall!(arena, EXOCALL_PMM_FREE, data_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, cmd_buf, 1, 0, 0);
+        ret 27;
+    ]
+
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, FILE_PKG_SAFE_0, 0, ext_buf) != 0) [
+        exocall!(arena, EXOCALL_PMM_FREE, data_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, cmd_buf, 1, 0, 0);
+        ret 28;
+    ]
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    pkg_slot = slot_find_free_high(table);
+    if (pkg_slot < 1) [
+        exocall!(arena, EXOCALL_PMM_FREE, data_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, cmd_buf, 1, 0, 0);
+        ret 28;
+    ]
+    if (exocall!(arena, EXOCALL_SLOT_LOAD, pkg_slot, ext_buf@[CASE_EXT_PG] << 3, ext_buf@[CASE_EXT_PAGES] << 3, ext_buf@[CASE_EXT_HASH]) != LIT_EXIT_OK) [
+        exocall!(arena, EXOCALL_PMM_FREE, data_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, cmd_buf, 1, 0, 0);
+        ret 28;
+    ]
+
+    err = 0;
+    // 1. install pkg_a.dat 1 0 -> 0, verify -> 0
+    cmd_buf@[0] = -1142466136111306974; cmd_buf@[1] = n_a0; cmd_buf@[2] = 227368366125;
+    if (test_run_pkg!(arena, pkg_slot, cmd_buf, 21) != 0) [ err = 29; ]
+    cmd_buf@[0] = 55109298626095; // "verify"
+    if ((err == 0) & (test_run_pkg!(arena, pkg_slot, cmd_buf, 6) != 0)) [ err = 29; ]
+
+    // 2. install pkg_b.dat 1 1 (dep on id 0) -> 0
+    cmd_buf@[0] = -1142466136111306974; cmd_buf@[1] = n_b0; cmd_buf@[2] = 231663333421;
+    if ((err == 0) & (test_run_pkg!(arena, pkg_slot, cmd_buf, 21) != 0)) [ err = 30; ]
+
+    // 3. remove pkg_a.dat must fail while pkg_b.dat depends on it
+    cmd_buf@[0] = 3021948537851485739; cmd_buf@[1] = 3249943054017306660;
+    if ((err == 0) & (test_run_pkg!(arena, pkg_slot, cmd_buf, 16) == 0)) [ err = 31; ]
+
+    // 4. upgrade pkg_a.dat 2 0 -> 0; downgrade pkg_a.dat 1 0 -> != 0; verify -> 0
+    cmd_buf@[0] = -1144445257075644114; cmd_buf@[1] = n_a0; cmd_buf@[2] = 227368431661;
+    if ((err == 0) & (test_run_pkg!(arena, pkg_slot, cmd_buf, 21) != 0)) [ err = 32; ]
+    cmd_buf@[0] = -1144445257075644114; cmd_buf@[1] = n_a0; cmd_buf@[2] = 227368366125;
+    if ((err == 0) & (test_run_pkg!(arena, pkg_slot, cmd_buf, 21) == 0)) [ err = 33; ]
+    cmd_buf@[0] = 55109298626095;
+    if ((err == 0) & (test_run_pkg!(arena, pkg_slot, cmd_buf, 6) != 0)) [ err = 34; ]
+
+    // 5. Live 1-byte NVMe tamper detection: mutate pkg_a.dat on disk -> verify must fail
+    if (err == 0) [
+        if (case_find_artifact!(arena, n_a0, 45, ext_buf) != 0) [
+            err = 35;
+        ] else [
+            pg_a = ext_buf@[CASE_EXT_PG];
+            if (case_rw_pages!(arena, 0, pg_a, 1, data_buf) != 0) [
+                err = 35;
+            ] else [
+                data_buf@[0] = data_buf@[0] ^ 1;
+                if (case_rw_pages!(arena, 1, pg_a, 1, data_buf) != 0) [
+                    err = 35;
+                ] else [
+                    cmd_buf@[0] = 55109298626095;
+                    if (test_run_pkg!(arena, pkg_slot, cmd_buf, 6) == 0) [
+                        err = 36;
+                    ]
+                ]
+            ]
+        ]
+    ]
+
+    // 6. Clean remove pkg_b.dat -> remove pkg_a.dat -> delete pkg.db -> zero leaks
+    cmd_buf@[0] = 3021948537851485739; cmd_buf@[1] = 3249943054034083876;
+    if ((err == 0) & (test_run_pkg!(arena, pkg_slot, cmd_buf, 16) != 0)) [ err = 37; ]
+    cmd_buf@[0] = 3021948537851485739; cmd_buf@[1] = 3249943054017306660;
+    if ((err == 0) & (test_run_pkg!(arena, pkg_slot, cmd_buf, 16) != 0)) [ err = 37; ]
+    if (err == 0) [
+        if (case_delete_file!(arena, FILE_PKG_DB_0, 0) != 0) [ err = 37; ]
+    ]
+
+    exocall!(arena, EXOCALL_SLOT_UNLOAD, pkg_slot, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, data_buf, 1, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, cmd_buf, 1, 0, 0);
+    if (err != 0) [ ret err; ]
+
+    p1 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p1, 1, 0, 0);
+    if (p1 != p0) [ ret 38; ]
+    ret 0;
+]
+
+fn test_display_abi!(arena) [
+    p0 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p0, 1, 0, 0);
+
+    ctrl = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    ring = exocall!(arena, EXOCALL_PMM_ALLOC, SAGR_CMD_RING_PAGES, 0, 0, 0);
+    if ((ctrl == 0) | (ring == 0)) [
+        if (ctrl != 0) [ exocall!(arena, EXOCALL_PMM_FREE, ctrl, 1, 0, 0); ]
+        if (ring != 0) [ exocall!(arena, EXOCALL_PMM_FREE, ring, SAGR_CMD_RING_PAGES, 0, 0); ]
+        ret 39;
+    ]
+    sagr_ring_init!(ctrl, ring);
+    if ((ctrl@[DISP_LENS_FORMAT] != SURF_FMT_BGRA8) | (ctrl@[DISP_LENS_CMD_RING] != ring)) [
+        exocall!(arena, EXOCALL_PMM_FREE, ctrl, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, ring, SAGR_CMD_RING_PAGES, 0, 0);
+        ret 40;
+    ]
+
+    err = 0;
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_RECT, 1, 10, 20), sagr_pack_ext(100, 50, 16777215), 4, 0) != 0) [ err = 40; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_BLIT_SURFACE, 0, 5, 6), sagr_pack_ext(32, 16, 128), 4096, 64) != 0) [ err = 40; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, SAGR_FLAG_OPAQUE_BG | SAGR_FLAG_CLIP, 8, 16), sagr_pack_ext(12, 2, 6401007), 8192, sagr_pack_clip(0, 0, 640, 480)) != 0) [ err = 40; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_DAMAGE_RECT, 3, 10, 20), sagr_pack_ext(100, 50, 0), 0, 0) != 0) [ err = 40; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_COMMIT, 3, 1, 0), 0, 42, 0) != 0) [ err = 40; ]
+
+    out_cmd = arena@[ARENA_LENS_META_BUF] + 640;
+    loop (c:5 = 1 .. 6) [
+        if ((err == 0) & (sagr_ring_pop!(ctrl, out_cmd) != 0)) [ err = 41; ]
+        if ((err == 0) & (sagr_cmd_op(out_cmd@[0]) != c)) [ err = 41; ]
+        if ((err == 0) & (c == SAGR_CMD_GLYPH_RUN)) [
+            if ((sagr_cmd_flags(out_cmd@[0]) != (SAGR_FLAG_OPAQUE_BG | SAGR_FLAG_CLIP)) | (sagr_cmd_u32(out_cmd@[1]) != 6401007) | (out_cmd@[2] != 8192)) [ err = 41; ]
+        ]
+        if ((err == 0) & (c == SAGR_CMD_COMMIT)) [
+            if ((sagr_cmd_flags(out_cmd@[0]) != 3) | (out_cmd@[2] != 42)) [ err = 41; ]
+            ctrl@[DISP_LENS_FRAME_SEQ] = out_cmd@[2];
+        ]
+    ]
+    if ((err == 0) & ((!(sagr_ring_pop!(ctrl, out_cmd) < 0)) | (ctrl@[DISP_LENS_FRAME_SEQ] != 42) | (ctrl@[DISP_LENS_CMD_SEQ] != 42))) [
+        err = 41;
+    ]
+
+    // Wrap & full-ring saturation across exact 256-slot (8192 B) boundary
+    if (err == 0) [
+        loop (f:255 = 0 .. 255) [
+            if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_RECT, 0, f, f), 0, 0, 0) != 0) [ err = 42; ]
+        ]
+        if ((!(sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_RECT, 0, 0, 0), 0, 0, 0) < 0)) | (ctrl@[DISP_LENS_CMD_DROPPED] != 1)) [ err = 42; ]
+    ]
+
+    exocall!(arena, EXOCALL_PMM_FREE, ctrl, 1, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, ring, SAGR_CMD_RING_PAGES, 0, 0);
+    if (err != 0) [ ret err; ]
+
+    p1 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p1, 1, 0, 0);
+    if (p1 != p0) [ ret 42; ]
+    ret 0;
+]
+
 fn test_bootinfo!(arena) [
     bi = arena@[ARENA_LENS_BOOT_INFO];
     if (bi == 0) [
@@ -665,6 +895,15 @@ fn main!(arena) [
     ]
     if (battle_cell_abort_unwind!(arena) != 0) [
         ret 19;
+    ]
+    if (test_case_128!(arena) != 0) [
+        ret 21;
+    ]
+    if (test_pkg!(arena) != 0) [
+        ret 26;
+    ]
+    if (test_display_abi!(arena) != 0) [
+        ret 39;
     ]
 
     ret 0;

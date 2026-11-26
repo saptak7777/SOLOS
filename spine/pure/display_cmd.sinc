@@ -1,0 +1,91 @@
+// ==========================================
+// spine/pure/display_cmd.sinc
+// Pure 32-Byte SAGR Command Pack/Unpack & Linear Ring Helpers (Strict Law 15)
+// ==========================================
+
+fn sagr_pack_hdr(op, flags_or_id, x, y) [
+    ret (op & 65535) | ((flags_or_id & 65535) << 16) | ((x & 65535) << 32) | ((y & 65535) << 48);
+]
+
+fn sagr_pack_ext(a16, b16, c32) [
+    ret (a16 & 65535) | ((b16 & 65535) << 16) | ((c32 & 4294967295) << 32);
+]
+
+fn sagr_pack_clip(x, y, w, h) [
+    ret sagr_pack_hdr(x, y, w, h);
+]
+
+fn sagr_cmd_op(qw0) [
+    ret qw0 & 65535;
+]
+
+fn sagr_cmd_flags(qw0) [
+    ret (qw0 >> 16) & 65535;
+]
+
+fn sagr_cmd_x(qw0) [
+    ret (qw0 >> 32) & 65535;
+]
+
+fn sagr_cmd_y(qw0) [
+    ret (qw0 >> 48) & 65535;
+]
+
+fn sagr_cmd_w(qw1) [
+    ret qw1 & 65535;
+]
+
+fn sagr_cmd_h(qw1) [
+    ret (qw1 >> 16) & 65535;
+]
+
+fn sagr_cmd_u32(qw1) [
+    ret (qw1 >> 32) & 4294967295;
+]
+
+fn sagr_ring_init!(ctrl, ring_buf) [
+    loop (i:16 = 0 .. DISP_CTRL_QWORDS) [
+        ctrl@[i] = 0;
+    ]
+    ctrl@[DISP_LENS_FORMAT]   = SURF_FMT_BGRA8;
+    ctrl@[DISP_LENS_CMD_RING] = ring_buf;
+    ret 0;
+]
+
+fn sagr_ring_push!(ctrl, qw0, qw1, qw2, qw3) [
+    head = ctrl@[DISP_LENS_CMD_HEAD];
+    tail = ctrl@[DISP_LENS_CMD_TAIL];
+    next_head = (head + 1) & 255;
+    if (next_head == tail) [
+        ctrl@[DISP_LENS_CMD_DROPPED] = ctrl@[DISP_LENS_CMD_DROPPED] + 1;
+        ret -1;
+    ]
+    ring = ctrl@[DISP_LENS_CMD_RING];
+    base = head << 2;
+    ring@[base]       = qw0;
+    ring@[(base + 1)] = qw1;
+    ring@[(base + 2)] = qw2;
+    ring@[(base + 3)] = qw3;
+    ctrl@[DISP_LENS_CMD_HEAD] = next_head;
+    if (sagr_cmd_op(qw0) == SAGR_CMD_COMMIT) [
+        ctrl@[DISP_LENS_CMD_SEQ] = qw2;
+    ]
+    ret 0;
+]
+
+fn sagr_ring_pop!(ctrl, out_cmd) [
+    head = ctrl@[DISP_LENS_CMD_HEAD];
+    tail = ctrl@[DISP_LENS_CMD_TAIL];
+    if (head == tail) [
+        ret -1;
+    ]
+    ring = ctrl@[DISP_LENS_CMD_RING];
+    base = tail << 2;
+    out_cmd@[0] = ring@[base];
+    out_cmd@[1] = ring@[(base + 1)];
+    out_cmd@[2] = ring@[(base + 2)];
+    out_cmd@[3] = ring@[(base + 3)];
+    ctrl@[DISP_LENS_CMD_TAIL] = (tail + 1) & 255;
+    ret 0;
+]
+

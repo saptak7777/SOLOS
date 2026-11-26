@@ -7,9 +7,12 @@ const CASE_MAGIC             = 1163084099;         // "CASE" (0x45534143)
 const CASE_VERSION           = 1;
 const CASE_SB_LBA            = 128;                // Page 16: Superblock
 const CASE_BITMAP_LBA        = 136;                // Page 17: 4 KB Page Bitmap
-const CASE_TABLE_LBA         = 144;                // Page 18: 64 x 64 B Artifact Table
+const CASE_TABLE_START_PG    = 18;                 // Pages 18..19: 128 x 64 B Artifact Table
+const CASE_TABLE_PAGES       = 2;
+const CASE_TABLE_LBA         = 144;                // Page 18 start LBA (18 << 3)
 const CASE_DATA_START_PG     = 25;                 // LBA 200+
-const CASE_MAX_ENTRIES       = 64;
+const CASE_RESERVED_MASK     = 33554431;           // Bits 0..24 reserved (incl. Pg 18..19)
+const CASE_MAX_ENTRIES       = 128;
 
 // Superblock Lenses (Page 16, LBA 128)
 const CASE_SB_LENS_MAGIC     = 0;
@@ -63,5 +66,7 @@ const FILE_CAT_SAFE_0        = 2170482325944343068; // "cat.safe"
 const FILE_RM_SAFE_0         = 8478446585718315;    // "rm.safe"
 const FILE_BUILD_SAFE_0      = 1886160645580271131; // "build.sa"
 const FILE_BUILD_SAFE_1      = 7711;                // "fe"
+const FILE_PKG_SAFE_0        = 2170482325943493673; // "pkg.safe"
+const FILE_PKG_DB_0          = 29815614743593;      // "pkg.db"
 const CASE_SAFE_EXT_PACKED   = 129370828029;        // ".safe" (5 TRG bytes)
 

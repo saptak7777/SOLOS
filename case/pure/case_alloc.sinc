@@ -9,7 +9,7 @@ fn case_pack_meta(type_val, flags, epoch, pages) [
 
 fn case_find_free_entry(table_buf) [
     free_idx = -1;
-    loop (i:64 = 0 .. CASE_MAX_ENTRIES) [
+    loop (i:128 = 0 .. CASE_MAX_ENTRIES) [
         if (free_idx == -1) [
             base = i << 3;
             meta = table_buf@[(base + CASE_LENS_META)];
@@ -41,6 +41,10 @@ fn case_clear_entry!(table_buf, idx) [
 ]
 
 fn case_mark_pages!(bitmap_buf, start_pg, num_pages, is_alloc) [
+    // Never unmark reserved system/table pages (0..24, incl. Pg 18..19)
+    if ((is_alloc == 0) & (start_pg < CASE_DATA_START_PG)) [
+        ret -1;
+    ]
     loop (k:512 = 0 .. num_pages) [
         pg = start_pg + k;
         w = pg >> 6;

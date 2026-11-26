@@ -73,6 +73,7 @@ cp "$ROOT_DIR/shark/data/font_trg_terminus.bin" "$ESP_DIR/EFI/SOLOS/FONT.BIN"
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/cat/build.staff" "$BUILD_DIR/cat.safe"
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/rm/build.staff" "$BUILD_DIR/rm.safe"
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/build/build.staff" "$BUILD_DIR/build.safe"
+"$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/pkg/build.staff" "$BUILD_DIR/pkg.safe"
 
 SINC_WS="$BUILD_DIR/sinc_cell_ws"
 rm -rf "$SINC_WS"
@@ -102,7 +103,7 @@ python3 -c "open('$BUILD_DIR/bad1.trg', 'wb').write(b'BAD1' * 20)"
 printf 'fn main() [\n    ret nope;\n]\n' > "$BUILD_DIR/bad2.sinc"
 "$ROOT_DIR/bin/trg_encode" "$BUILD_DIR/bad2.sinc" "$BUILD_DIR/bad2.trg"
 
-# Seed CASE 4 KB Page-Native CoW Filesystem on $DISK_IMG (SB=Pg16, Bitmap=Pg17, Table=Pg18, Data=Pg25+)
+# Seed CASE 4 KB Page-Native CoW Filesystem on $DISK_IMG (SB=Pg16, Bitmap=Pg17, Table=Pg18..19, Data=Pg25+)
 python3 -c "
 def fnv1a_64(data):
     h = 14695981039346656037
@@ -134,6 +135,7 @@ with open('$DISK_IMG', 'r+b') as f:
     cat_data      = open('$BUILD_DIR/cat.safe', 'rb').read()
     rm_data       = open('$BUILD_DIR/rm.safe', 'rb').read()
     build_data    = open('$BUILD_DIR/build.safe', 'rb').read()
+    pkg_data      = open('$BUILD_DIR/pkg.safe', 'rb').read()
     app_trg_data  = open('$BUILD_DIR/app.trg', 'rb').read()
     bad1_trg_data = open('$BUILD_DIR/bad1.trg', 'rb').read()
     bad2_trg_data = open('$BUILD_DIR/bad2.trg', 'rb').read()
@@ -151,7 +153,8 @@ with open('$DISK_IMG', 'r+b') as f:
             bitmap[p >> 3] |= (1 << (p & 7))
 
     mark_used(0, 25)
-    table = bytearray(4096)
+    assert (int.from_bytes(bitmap[0:8], 'little') & 33554431) == 33554431, 'Pg 0..24 (incl Pg 19) must be reserved'
+    table = bytearray(8192) # 128 x 64 B entries across Pg 18..19
     specs = [
         (1, 3255009809826913836, 129370828029, selftest_data),
         (1, 8478446585722159, 0, v1_data),
@@ -163,6 +166,7 @@ with open('$DISK_IMG', 'r+b') as f:
         (1, 2170482325944343068, 0, cat_data),
         (1, 8478446585718315, 0, rm_data),
         (1, 1886160645580271131, 7711, build_data),
+        (1, 2170482325943493673, 0, pkg_data),
         (2, 9054675775596826, 0, app_trg_data),
         (2, 2317996998753327643, 0, bad1_trg_data),
         (2, 2317996998770104859, 0, bad2_trg_data),
@@ -176,6 +180,14 @@ with open('$DISK_IMG', 'r+b') as f:
         table[i*64 : (i+1)*64] = make_entry(ty, pages, next_pg, len(data), fnv1a_64(data), q0, q1)
         mark_used(next_pg, pages)
         next_pg += pages
+
+    # Seed isolated entry 70 (Pg 19) to verify >63 index & Pg 19 reads
+    hi_data = bytes([0xAA, 0x55]) * 32
+    f.seek(next_pg * 4096)
+    f.write(hi_data)
+    table[70*64 : 71*64] = make_entry(3, 1, next_pg, len(hi_data), fnv1a_64(hi_data), 3249943054441456161, 0)
+    mark_used(next_pg, 1)
+    next_pg += 1
 
     f.seek(16 * 4096)
     f.write(sb)

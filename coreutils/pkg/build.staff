@@ -1,0 +1,35 @@
+// ==========================================
+// coreutils/pkg/build.staff
+// On-Demand CASE Package Manager Cell Manifest
+// ==========================================
+
+artifact pkg [
+    target = x86_64_none;
+    type   = bin;
+]
+
+deps [
+    spine/data/abi_defs.sinc;
+    spine/data/cli_defs.sinc;
+    spine/pure/cmd_line.sinc;
+    case/data/case_defs.sinc;
+    case/pure/case.sinc;
+    case/pure/case_alloc.sinc;
+    case/sys/case_read.sinc;
+    case/sys/case_write.sinc;
+    shark/data/console_defs.sinc;
+    shark/pure/math.sinc;
+    shark/sys/console.sinc;
+    coreutils/pkg/data/pkg_defs.sinc;
+    coreutils/pkg/pure/pkg_db.sinc;
+]
+
+driver [
+    coreutils/pkg/sys/entry.sinc;
+]
+
+flags [
+    optimize = 3;
+    heap     = 1000000000;
+]
+

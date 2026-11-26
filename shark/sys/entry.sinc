@@ -79,6 +79,13 @@ fn kernel_halt_err!(code) [
     ret 1;
 ]
 
+fn kernel_free_pages!(pmm, base, num_pages) [
+    loop (fp:8 = 0 .. num_pages) [
+        pmm_free_page!(pmm, base + (fp << 12));
+    ]
+    ret 0;
+]
+
 fn kernel_main!(boot_info) [
     if (boot_info == 0) [
         ret kernel_halt_err!(ERR_BAD_BOOT_INFO);
@@ -200,39 +207,47 @@ fn kernel_main!(boot_info) [
     free_before = pmm@[PMM_LENS_FREE_PAGES];
     meta_buf@[3] = 0;
 
-    // 8. Boot Slot 0: resolve minit.safe dynamically via CASE Superblock & Table
+    // 8. Boot Slot 0: resolve minit.safe dynamically via 2-page CASE Superblock & Table
     if (nvme != 0) [
-        tbl_buf = pmm_alloc_page!(pmm);
+        tbl_buf = pmm_alloc_contiguous!(pmm, CASE_TABLE_PAGES);
         if (tbl_buf == 0) [
             ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         if (nvme_rw_sectors!(nvme, 0, CASE_SB_LBA, 8, tbl_buf) != 0) [
-            pmm_free_page!(pmm, tbl_buf);
+            kernel_free_pages!(pmm, tbl_buf, CASE_TABLE_PAGES);
             ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         if ((tbl_buf@[CASE_SB_LENS_MAGIC] != CASE_MAGIC) | (tbl_buf@[CASE_SB_LENS_VER] != CASE_VERSION)) [
-            pmm_free_page!(pmm, tbl_buf);
+            kernel_free_pages!(pmm, tbl_buf, CASE_TABLE_PAGES);
             ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
-        if (nvme_rw_sectors!(nvme, 0, CASE_TABLE_LBA, 8, tbl_buf) != 0) [
-            pmm_free_page!(pmm, tbl_buf);
+        t_err = 0;
+        loop (tp:8 = 0 .. CASE_TABLE_PAGES) [
+            if (t_err == 0) [
+                if (nvme_rw_sectors!(nvme, 0, (CASE_TABLE_START_PG + tp) << 3, 8, tbl_buf + (tp << 12)) != 0) [
+                    t_err = 1;
+                ]
+            ]
+        ]
+        if (t_err != 0) [
+            kernel_free_pages!(pmm, tbl_buf, CASE_TABLE_PAGES);
             ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         m_idx = case_lookup(tbl_buf, FILE_MINIT_SAFE_0, FILE_MINIT_SAFE_1);
         if (m_idx < 0) [
-            pmm_free_page!(pmm, tbl_buf);
+            kernel_free_pages!(pmm, tbl_buf, CASE_TABLE_PAGES);
             ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         m_base = m_idx << 3;
         m_meta = tbl_buf@[(m_base + CASE_LENS_META)];
         if (case_entry_type(m_meta) != CASE_TYPE_SAFE) [
-            pmm_free_page!(pmm, tbl_buf);
+            kernel_free_pages!(pmm, tbl_buf, CASE_TABLE_PAGES);
             ret kernel_halt_err!(ERR_LIT_LOAD);
         ]
         m_lba  = tbl_buf@[(m_base + CASE_LENS_START_PG)] << 3;
         m_secs = case_entry_pages(m_meta) << 3;
         m_hash = tbl_buf@[(m_base + CASE_LENS_HASH)];
-        pmm_free_page!(pmm, tbl_buf);
+        kernel_free_pages!(pmm, tbl_buf, CASE_TABLE_PAGES);
 
         r_load = lit_slot_load!(arena_ptr, 0, m_lba, m_secs, m_hash);
         if (r_load != LIT_EXIT_OK) [

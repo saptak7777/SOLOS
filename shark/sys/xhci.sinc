@@ -724,10 +724,10 @@ fn xhci_init!(xhci_bar, bdf16, pmm, ring_ptr, tsc_khz) [
             if (xhci_wait_reg32!(p_addr, XHCI_PORTSC_PRC, XHCI_PORTSC_PRC, 150000, tsc_khz) == 0) [
                 xhci_portsc_rmw!(op_base, rp, 0, XHCI_PORTSC_W1C_MASK);
                 xhci_delay_us!(tsc_khz, 10000);
-                ps2 = mmio_read32!(p_addr);
-                if ((ps2 & 3) == 3) [
+                psts = mmio_read32!(p_addr);
+                if ((psts & 3) == 3) [
                     topo = xhci + 1728;
-                    topo@[0] = ((ps2 >> 10) & 15) | ((rp + 1) << 8);
+                    topo@[0] = ((psts >> 10) & 15) | ((rp + 1) << 8);
                     topo@[1] = 0;
                     xhci_enumerate_port!(xhci, pmm, topo);
                 ]

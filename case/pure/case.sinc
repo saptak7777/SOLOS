@@ -25,7 +25,7 @@ fn case_entry_pages(meta) [
 
 fn case_lookup(table_buf, name_0, name_1) [
     match_idx = -1;
-    loop (i:64 = 0 .. CASE_MAX_ENTRIES) [
+    loop (i:128 = 0 .. CASE_MAX_ENTRIES) [
         if (match_idx == -1) [
             base = i << 3;
             meta = table_buf@[(base + CASE_LENS_META)];

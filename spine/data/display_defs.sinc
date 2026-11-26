@@ -1,0 +1,51 @@
+// ==========================================
+// spine/data/display_defs.sinc
+// Frozen Linear-Streaming SAGR Display & Command ABI (Strict Law 15)
+//
+// DisplayControl POD (128 B = 16 QWORDs = 2 Cache Lines):
+//   Cache Line 0 (QWORDs 0..7):  DisplaySurface (front_fb, back_fb, dims, seq)
+//   Cache Line 1 (QWORDs 8..15): 256-Slot SAGR Command Ring Control
+//
+// Command Ring Allocation: 2 contiguous PMM pages (8192 B = 256 x 32 B exact)
+//
+// LINEAR DRAW STREAM LIFETIME INVARIANT:
+//   Client buffers referenced by SAGR_CMD_GLYPH_RUN.str_addr and
+//   SAGR_CMD_BLIT_SURFACE.src_buf_addr MUST stay immutable until SAGR drains
+//   past the matching SAGR_CMD_COMMIT and updates:
+//     DisplayControl@[DISP_LENS_FRAME_SEQ] >= commit.frame_seq
+//
+// Return Channel: SAGR -> Client reuses keyboard + window InputEvent
+//   (EVT_KEY_DOWN = 1, EVT_KEY_UP = 2, EVT_WIN_FOCUS = 3, EVT_WIN_CLOSE = 4)
+// ==========================================
+
+// 128-Byte DisplayControl Lenses (Cache Line 0: Surface; Cache Line 1: Cmd Ring)
+const DISP_CTRL_QWORDS        = 16;
+const DISP_LENS_FRONT_FB      = 0;
+const DISP_LENS_BACK_FB       = 1;
+const DISP_LENS_WIDTH         = 2;
+const DISP_LENS_HEIGHT        = 3;
+const DISP_LENS_STRIDE        = 4;
+const DISP_LENS_FORMAT        = 5;
+const DISP_LENS_DIRTY         = 6;
+const DISP_LENS_FRAME_SEQ     = 7;
+
+const DISP_LENS_CMD_RING      = 8;  // 8192 B (2 PMM pages) = 256 x 32 B slots
+const DISP_LENS_CMD_HEAD      = 9;
+const DISP_LENS_CMD_TAIL      = 10;
+const DISP_LENS_CMD_SEQ       = 11;
+const DISP_LENS_CMD_DROPPED   = 12;
+
+const SURF_FMT_BGRA8          = 1;
+const SAGR_CMD_RING_SLOTS     = 256;
+const SAGR_CMD_RING_PAGES     = 2;
+
+// Uniform Linear Command Opcodes (32 B = 4 QWORDs/slot, qw0=[op:16|flags/id:16|x:16|y:16])
+const SAGR_CMD_RECT           = 1; // qw1=[w:16|h:16|color_bgra:32], qw2=aux
+const SAGR_CMD_BLIT_SURFACE   = 2; // qw1=[w:16|h:16|stride:32], qw2=src_buf_addr, qw3=src_off
+const SAGR_CMD_GLYPH_RUN      = 3; // qw1=[count:16|scale:16|color_fg:32], qw2=str_addr, qw3=clip_rect
+const SAGR_CMD_DAMAGE_RECT    = 4; // qw0=[op:16|surface_id:16|x:16|y:16], qw1=[w:16|h:16|0:32]
+const SAGR_CMD_COMMIT         = 5; // qw0=[op:16|surface_id:16|flags:32], qw2=frame_seq
+
+const SAGR_FLAG_OPAQUE_BG     = 1;
+const SAGR_FLAG_CLIP          = 2;
+

@@ -11,7 +11,7 @@ fn case_free_meta!(arena, sb_buf, bmp_buf, tbl_buf) [
         exocall!(arena, EXOCALL_PMM_FREE, bmp_buf, 1, 0, 0);
     ]
     if (tbl_buf != 0) [
-        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, 1, 0, 0);
+        exocall!(arena, EXOCALL_PMM_FREE, tbl_buf, CASE_TABLE_PAGES, 0, 0);
     ]
     ret 0;
 ]
@@ -19,14 +19,14 @@ fn case_free_meta!(arena, sb_buf, bmp_buf, tbl_buf) [
 fn case_load_meta!(arena, out_triple) [
     sb_buf  = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
     bmp_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
-    tbl_buf = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    tbl_buf = exocall!(arena, EXOCALL_PMM_ALLOC, CASE_TABLE_PAGES, 0, 0, 0);
     if ((sb_buf == 0) | (bmp_buf == 0) | (tbl_buf == 0)) [
         case_free_meta!(arena, sb_buf, bmp_buf, tbl_buf);
         ret -1;
     ]
     r_s = exocall!(arena, EXOCALL_NVME_RW, 0, CASE_SB_LBA, 8, sb_buf);
     r_b = exocall!(arena, EXOCALL_NVME_RW, 0, CASE_BITMAP_LBA, 8, bmp_buf);
-    r_t = exocall!(arena, EXOCALL_NVME_RW, 0, CASE_TABLE_LBA, 8, tbl_buf);
+    r_t = case_rw_pages!(arena, 0, CASE_TABLE_START_PG, CASE_TABLE_PAGES, tbl_buf);
     if ((r_s != 0) | (r_b != 0) | (r_t != 0)) [
         case_free_meta!(arena, sb_buf, bmp_buf, tbl_buf);
         ret -2;
@@ -34,7 +34,7 @@ fn case_load_meta!(arena, out_triple) [
     magic = sb_buf@[CASE_SB_LENS_MAGIC];
     ver   = sb_buf@[CASE_SB_LENS_VER];
     tot   = sb_buf@[CASE_SB_LENS_TOTAL_PG];
-    if ((magic != CASE_MAGIC) | (ver != CASE_VERSION) | (!(tot > CASE_DATA_START_PG))) [
+    if ((magic != CASE_MAGIC) | (ver != CASE_VERSION) | (!(tot > CASE_DATA_START_PG)) | ((bmp_buf@[0] & CASE_RESERVED_MASK) != CASE_RESERVED_MASK)) [
         case_free_meta!(arena, sb_buf, bmp_buf, tbl_buf);
         ret -2;
     ]
@@ -46,7 +46,7 @@ fn case_load_meta!(arena, out_triple) [
 
 fn case_flush_free_meta!(arena, sb_buf, bmp_buf, tbl_buf) [
     sb_buf@[CASE_SB_LENS_GEN] = sb_buf@[CASE_SB_LENS_GEN] + 1;
-    exocall!(arena, EXOCALL_NVME_RW, 1, CASE_TABLE_LBA, 8, tbl_buf);
+    case_rw_pages!(arena, 1, CASE_TABLE_START_PG, CASE_TABLE_PAGES, tbl_buf);
     exocall!(arena, EXOCALL_NVME_RW, 1, CASE_BITMAP_LBA, 8, bmp_buf);
     exocall!(arena, EXOCALL_NVME_RW, 1, CASE_SB_LBA, 8, sb_buf);
     case_free_meta!(arena, sb_buf, bmp_buf, tbl_buf);

@@ -1,0 +1,106 @@
+// ==========================================
+// coreutils/pkg/pure/pkg_db.sinc
+// Pure 64-Record Package Database & Dependency Graph Helpers (Strict Law 15)
+// ==========================================
+
+fn pkg_ver(vf) [
+    ret vf & 4294967295;
+]
+
+fn pkg_flags(vf) [
+    ret (vf >> 32) & 4294967295;
+]
+
+fn pkg_pack_vf(ver, flags) [
+    ret (ver & 4294967295) | ((flags & 4294967295) << 32);
+]
+
+fn pkg_is_installed(db, id) [
+    vf = db@[((id << 3) + PKG_LENS_VER_FLAGS)];
+    if ((pkg_flags(vf) & PKG_FLAG_INSTALLED) != 0) [
+        ret 1;
+    ]
+    ret 0;
+]
+
+fn pkg_installed_mask(db) [
+    mask = 0;
+    loop (i:64 = 0 .. PKG_MAX_RECORDS) [
+        if (pkg_is_installed(db, i) != 0) [
+            mask = mask | (1 << i);
+        ]
+    ]
+    ret mask;
+]
+
+fn pkg_find_by_name(db, n0, n1) [
+    match = -1;
+    loop (i:64 = 0 .. PKG_MAX_RECORDS) [
+        if (match < 0) [
+            if (pkg_is_installed(db, i) != 0) [
+                base = i << 3;
+                if ((db@[(base + PKG_LENS_NAME_0)] == n0) & (db@[(base + PKG_LENS_NAME_1)] == n1)) [
+                    match = i;
+                ]
+            ]
+        ]
+    ]
+    ret match;
+]
+
+fn pkg_find_free(db) [
+    free_id = -1;
+    loop (i:64 = 0 .. PKG_MAX_RECORDS) [
+        if (free_id < 0) [
+            if (pkg_is_installed(db, i) == 0) [
+                free_id = i;
+            ]
+        ]
+    ]
+    ret free_id;
+]
+
+fn pkg_has_dependents(db, id) [
+    hit = 0;
+    loop (i:64 = 0 .. PKG_MAX_RECORDS) [
+        if ((i != id) & (pkg_is_installed(db, i) != 0)) [
+            deps = db@[((i << 3) + PKG_LENS_DEPS)];
+            if (((deps >> id) & 1) != 0) [
+                hit = 1;
+            ]
+        ]
+    ]
+    ret hit;
+]
+
+fn pkg_deps_valid(installed_mask, id, deps) [
+    if (((deps >> id) & 1) != 0) [
+        ret 0;
+    ]
+    if ((deps & installed_mask) != deps) [
+        ret 0;
+    ]
+    ret 1;
+]
+
+fn pkg_set_record!(db, id, n0, n1, hash_val, deps, ver, flags) [
+    base = id << 3;
+    db@[(base + PKG_LENS_ID)]        = id;
+    db@[(base + PKG_LENS_NAME_0)]    = n0;
+    db@[(base + PKG_LENS_NAME_1)]    = n1;
+    db@[(base + PKG_LENS_HASH)]      = hash_val;
+    db@[(base + PKG_LENS_DEPS)]      = deps;
+    db@[(base + PKG_LENS_VER_FLAGS)] = pkg_pack_vf(ver, flags | PKG_FLAG_INSTALLED);
+    db@[(base + 6)]                  = 0;
+    db@[(base + 7)]                  = 0;
+    ret 0;
+]
+
+fn pkg_clear_record!(db, id) [
+    base = id << 3;
+    loop (k:8 = 0 .. 8) [
+        db@[(base + k)] = 0;
+    ]
+    ret 0;
+]
+

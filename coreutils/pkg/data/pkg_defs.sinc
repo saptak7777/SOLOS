@@ -1,0 +1,48 @@
+// ==========================================
+// coreutils/pkg/data/pkg_defs.sinc
+// Canonical pkg.db Record Layout & Error Constants (Strict Law 15)
+// ==========================================
+
+const PKG_MAX_RECORDS    = 64;
+const PKG_DB_BYTES       = 4096;
+
+// 64-Byte Record Lenses (8 QWORDs per slot)
+const PKG_LENS_ID        = 0;
+const PKG_LENS_NAME_0    = 1;
+const PKG_LENS_NAME_1    = 2;
+const PKG_LENS_HASH      = 3;
+const PKG_LENS_DEPS      = 4;
+const PKG_LENS_VER_FLAGS = 5; // [version:32 | flags:32]
+
+const PKG_FLAG_INSTALLED = 1;
+const PKG_FLAG_CORE      = 2;
+
+// Fail-Fast Return Codes
+const PKG_OK             = 0;
+const PKG_ERR_ARGS       = 1;
+const PKG_ERR_OOM        = 2;
+const PKG_ERR_NO_PKG     = 3;
+const PKG_ERR_EXISTS     = 4;
+const PKG_ERR_BAD_DEP    = 5;
+const PKG_ERR_HAS_DEP    = 6;
+const PKG_ERR_CORE       = 7;
+const PKG_ERR_DOWNGRADE  = 8;
+const PKG_ERR_TAMPER     = 9;
+const PKG_ERR_IO         = 10;
+
+// Packed Pure TRG Subcommand Tokens
+const CMD_PKG_INSTALL    = 10455368495540002;   // "install"
+const CMD_PKG_UPGRADE    = 8476247531202862;    // "upgrade"
+const CMD_PKG_REMOVE     = 33187885882923;      // "remove"
+const CMD_PKG_LIST       = 757867045;           // "list"
+const CMD_PKG_VERIFY     = 55109298626095;      // "verify"
+
+// Pure TRG Output Tags
+const STR_PKG_OK         = 67846528660015631;   // "PKG OK\n" (7)
+const STR_PKG_ERR        = -355484182681089521; // "PKG ERR:" (8)
+const STR_PKG_ID         = 70653556126255631;   // "PKG_ID:" (7)
+const STR_PKG_VER        = 1078322271728;       // " VER:" (5)
+const STR_PKG_DEPS       = 276054979904496;     // " DEPS:" (6)
+const STR_PKG_FLG        = 1078138177008;       // " FLG:" (5)
+const STR_PKG_NONE       = 1699913428504048;    // " NO PKG" (7)
+
