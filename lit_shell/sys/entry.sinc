@@ -197,18 +197,13 @@ fn shell_execute_line!(arena, scratch, buf, len) [
     ret shell_dispatch_cell!(arena, buf, len);
 ]
 
-fn shell_handle_scancode!(arena, scratch, scancode) [
-    console = arena@[ARENA_LENS_CONSOLE];
-    shift = scratch@[SCRATCH_LENS_SHIFT_STATE];
-    new_shift = trg_update_shift_state(scancode, shift);
-    scratch@[SCRATCH_LENS_SHIFT_STATE] = new_shift;
-
-    if (trg_is_break_code(scancode) != 0) [
+fn shell_handle_input_evt!(arena, scratch, evt) [
+    if (input_evt_type(evt) != EVT_KEY_DOWN) [
         ret 0;
     ]
-
-    trg = trg_scancode_to_trg(scancode, new_shift);
-    if (trg == -1) [
+    console = arena@[ARENA_LENS_CONSOLE];
+    trg = input_evt_key(evt);
+    if ((trg < 0) | (trg == TRG_NONE)) [
         ret 0;
     ]
 
@@ -216,7 +211,7 @@ fn shell_handle_scancode!(arena, scratch, scancode) [
     buf_base = scratch + (SCRATCH_LENS_LINE_BUF << 3);
 
     // Enter / Return
-    if (trg == 241) [
+    if (trg == TRG_RET) [
         console_newline!(console);
         shell_execute_line!(arena, scratch, buf_base, line_len);
         scratch@[SCRATCH_LENS_LINE_LEN] = 0;
@@ -233,7 +228,7 @@ fn shell_handle_scancode!(arena, scratch, scancode) [
             col = console@[CONSOLE_LENS_COL];
             if (col > 0) [
                 console@[CONSOLE_LENS_COL] = col - 1;
-                console_putc!(console, 240);
+                console_putc!(console, TRG_SPC);
                 console@[CONSOLE_LENS_COL] = col - 1;
                 console_flush_screen!(console);
             ]
@@ -255,7 +250,6 @@ fn shell_run_repl!(arena, scratch) [
     console = arena@[ARENA_LENS_CONSOLE];
     ring = arena@[ARENA_LENS_RING];
 
-    scratch@[SCRATCH_LENS_SHIFT_STATE] = 0;
     scratch@[SCRATCH_LENS_LINE_LEN] = 0;
     scratch@[SCRATCH_LENS_RUNNING] = 1;
 
@@ -271,12 +265,13 @@ fn shell_run_repl!(arena, scratch) [
         if (scratch@[SCRATCH_LENS_RUNNING] == 0) [
             ret 0;
         ]
-        scancode = ring_pop!(ring);
-        if (scancode < 0) [
-            exocall!(arena, EXOCALL_WAIT_TICKS, 1, 0, 0, 0);
+        exocall!(arena, EXOCALL_INPUT_POLL, 0, 0, 0, 0);
+        evt = ring_pop!(ring);
+        if (evt < 0) [
+            exocall!(arena, EXOCALL_SLEEP_US, 10000, 1, 0, 0);
         ]
-        if (!(scancode < 0)) [
-            shell_handle_scancode!(arena, scratch, scancode);
+        if (!(evt < 0)) [
+            shell_handle_input_evt!(arena, scratch, evt);
         ]
     ]
     ret 0;
@@ -287,11 +282,11 @@ fn main!(arena) [
 
     if (test_mode == SHELL_TEST_MODE) [
         ring = arena@[ARENA_LENS_RING];
-        ring_push!(ring, 16);
-        ring_push!(ring, 22);
-        ring_push!(ring, 23);
-        ring_push!(ring, 20);
-        ring_push!(ring, 28);
+        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, 42, 0, 20));
+        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, 46, 0, 24));
+        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, 34, 0, 12));
+        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, 45, 0, 23));
+        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, TRG_RET, 0, 40));
     ]
 
     scratch = arena@[ARENA_LENS_META_BUF] + 64;

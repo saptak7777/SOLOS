@@ -1,0 +1,742 @@
+// ==========================================
+// shark/sys/xhci.sinc
+// Legacy-Free xHCI USB 2/3 Core, Single-Level Hub TT, HID Boot Kbd & MSI-X/MSI
+// ==========================================
+
+fn xhci_zpage!(pmm) [
+    p = pmm_alloc_page!(pmm);
+    if (p != 0) [ loop (z:512 = 0 .. 512) [ p@[z] = 0; ] ]
+    ret p;
+]
+
+fn xhci_ring_alloc!(pmm) [
+    r = xhci_zpage!(pmm);
+    if (r != 0) [
+        r@[510] = r;
+        r@[511] = (((XHCI_TRB_LINK << 10) | 2 | 1) << 32);
+    ]
+    ret r;
+]
+
+fn xhci_free3!(pmm, a, b, c) [
+    if (a != 0) [ pmm_free_page!(pmm, a); ]
+    if (b != 0) [ pmm_free_page!(pmm, b); ]
+    if (c != 0) [ pmm_free_page!(pmm, c); ]
+    ret 0;
+]
+
+fn xhci_delay_us!(tsc_khz, us) [
+    deadline = tsc_calc_deadline!(us, tsc_khz);
+    loop (w:1000000000 = 0 .. 1000000000) [
+        if (!(cpu_rdtsc!() < deadline)) [ ret 0; ]
+    ]
+    ret 0;
+]
+
+fn xhci_portsc_rmw!(op_base, port0, set_mask, clr_w1c) [
+    addr = op_base + XHCI_OP_PORTSC_BASE + (port0 << 4);
+    mmio_write32!(addr, (mmio_read32!(addr) & XHCI_PORTSC_PRESERVE) | set_mask | clr_w1c);
+    ret 0;
+]
+
+fn xhci_wait_reg32!(addr, mask, want, us, tsc_khz) [
+    deadline = tsc_calc_deadline!(us, tsc_khz);
+    loop (p:1000000000 = 0 .. 1000000000) [
+        if ((mmio_read32!(addr) & mask) == want) [ ret 0; ]
+        if ((p & 63) == 63) [
+            if (!(cpu_rdtsc!() < deadline)) [ ret 1; ]
+        ]
+    ]
+    ret 1;
+]
+
+fn xhci_trb_push!(ring_phys, idx_ptr, ccs_ptr, qw0, qw1_base) [
+    idx = idx_ptr@[0];
+    pcs = ccs_ptr@[0];
+    off = idx << 1;
+    ring_phys@[off] = qw0;
+    ring_phys@[(off + 1)] = qw1_base | (pcs << 32);
+    idx = idx + 1;
+    if (idx == 255) [
+        ring_phys@[510] = ring_phys;
+        ring_phys@[511] = (((XHCI_TRB_LINK << 10) | 2 | pcs) << 32);
+        idx = 0;
+        pcs = pcs ^ 1;
+    ]
+    idx_ptr@[0] = idx;
+    ccs_ptr@[0] = pcs;
+    ret 0;
+]
+
+fn xhci_ring_db!(xhci, slot_id, target) [
+    mmio_write32!(xhci@[XHCI_ST_DB_BASE] + (slot_id << 2), target);
+    ret 0;
+]
+
+fn xhci_evt_step!(xhci, write_erdp) [
+    e_idx = xhci@[XHCI_ST_EVT_IDX] + 1;
+    e_ccs = xhci@[XHCI_ST_EVT_CCS];
+    if (e_idx == 256) [
+        e_idx = 0;
+        e_ccs = e_ccs ^ 1;
+    ]
+    xhci@[XHCI_ST_EVT_IDX] = e_idx;
+    xhci@[XHCI_ST_EVT_CCS] = e_ccs;
+    if (write_erdp != 0) [
+        rt0 = xhci@[XHCI_ST_RT0_BASE];
+        rt0@[XHCI_IR_ERDP_QW] = (xhci@[XHCI_ST_EVT_RING] + (e_idx << 4)) | XHCI_ERDP_EHB;
+    ]
+    ret 0;
+]
+
+fn xhci_kbd_scan!(scan_qw, other_qw, mods, ev_type, ring_ptr) [
+    pushed = 0;
+    loop (i:6 = 2 .. 8) [
+        u = (scan_qw >> (i << 3)) & 255;
+        if (u != 0) [
+            found = 0;
+            loop (j:6 = 2 .. 8) [
+                if (((other_qw >> (j << 3)) & 255) == u) [ found = 1; ]
+            ]
+            if (found == 0) [
+                trg = hid_usage_to_trg(u, mods);
+                if (!(trg < 0)) [
+                    ring_push!(ring_ptr, input_evt_pack(ev_type, mods, trg, 0, u));
+                    pushed = pushed + 1;
+                ]
+            ]
+        ]
+    ]
+    ret pushed;
+]
+
+fn xhci_emit_kbd_events!(dev_base, ring_ptr) [
+    rpt = dev_base@[HID_DEV_RPT_BUF];
+    curr = rpt@[0];
+    prev = dev_base@[HID_DEV_PREV_STATE];
+    if (curr == prev) [ ret 0; ]
+    dev_base@[HID_DEV_PREV_STATE] = curr;
+    mods = curr & 255;
+    // Emit releases strictly before presses when keys swap within one report
+    pushed = xhci_kbd_scan!(prev, curr, mods, EVT_KEY_UP, ring_ptr);
+    ret pushed + xhci_kbd_scan!(curr, prev, mods, EVT_KEY_DOWN, ring_ptr);
+]
+
+fn xhci_rearm_hid!(dev_base, xhci) [
+    xhci_trb_push!(
+        dev_base@[HID_DEV_RING],
+        dev_base + (HID_DEV_RING_IDX << 3),
+        dev_base + (HID_DEV_RING_CCS << 3),
+        dev_base@[HID_DEV_RPT_BUF],
+        8 | (((XHCI_TRB_NORMAL << 10) | 36) << 32)
+    );
+    xhci_ring_db!(xhci, dev_base@[HID_DEV_SLOT], dev_base@[HID_DEV_DCI]);
+    ret 0;
+]
+
+fn xhci_handle_transfer_evt!(xhci, slot_id, dci, cc) [
+    if ((cc != 1) & (cc != 13)) [ ret 0; ]
+    cnt = xhci@[XHCI_ST_HID_COUNT];
+    ring_ptr = xhci@[XHCI_ST_RING_PTR];
+    pushed = 0;
+    loop (i:8 = 0 .. cnt) [
+        dev_base = xhci + ((XHCI_HID_BASE_QW + (i << 3)) << 3);
+        if ((dev_base@[HID_DEV_KIND] == USB_PROTO_KBD) & (dev_base@[HID_DEV_SLOT] == slot_id) & (dev_base@[HID_DEV_DCI] == dci)) [
+            pushed = pushed + xhci_emit_kbd_events!(dev_base, ring_ptr);
+            xhci_rearm_hid!(dev_base, xhci);
+        ]
+    ]
+    ret pushed;
+]
+
+fn xhci_poll!(xhci) [
+    if (xhci == 0) [ ret 0; ]
+    evt_ring = xhci@[XHCI_ST_EVT_RING];
+    rt0 = xhci@[XHCI_ST_RT0_BASE];
+    total_pushed = 0;
+    drained = 0;
+    keep_going = 1;
+
+    loop (n:256 = 0 .. 256) [
+        if (keep_going != 0) [
+            e_idx = xhci@[XHCI_ST_EVT_IDX];
+            qw1 = evt_ring@[((e_idx << 1) + 1)];
+            if (((qw1 >> 32) & 1) == xhci@[XHCI_ST_EVT_CCS]) [
+                if (((qw1 >> 42) & 63) == XHCI_TRB_EVT_TRANSFER) [
+                    total_pushed = total_pushed + xhci_handle_transfer_evt!(xhci, (qw1 >> 56) & 255, (qw1 >> 48) & 31, (qw1 >> 24) & 255);
+                ]
+                xhci_evt_step!(xhci, 0);
+                drained = drained + 1;
+            ] else [
+                keep_going = 0;
+            ]
+        ]
+    ]
+
+    if (drained != 0) [
+        rt0@[XHCI_IR_ERDP_QW] = (evt_ring + (xhci@[XHCI_ST_EVT_IDX] << 4)) | XHCI_ERDP_EHB;
+        mmio_write32!(rt0 + XHCI_IR_IMAN, mmio_read32!(rt0 + XHCI_IR_IMAN) | 1);
+    ]
+    ret total_pushed;
+]
+
+fn xhci_wait_event!(xhci, want_type, want_slot, us_timeout, out_ev) [
+    evt_ring = xhci@[XHCI_ST_EVT_RING];
+    deadline = tsc_calc_deadline!(us_timeout, xhci@[XHCI_ST_TSC_KHZ]);
+
+    loop (p:100000000 = 0 .. 100000000) [
+        off = xhci@[XHCI_ST_EVT_IDX] << 1;
+        qw0 = evt_ring@[off];
+        qw1 = evt_ring@[(off + 1)];
+
+        if (((qw1 >> 32) & 1) == xhci@[XHCI_ST_EVT_CCS]) [
+            xhci_evt_step!(xhci, 1);
+            if ((((qw1 >> 42) & 63) == want_type) & ((want_slot == 0) | (((qw1 >> 56) & 255) == want_slot))) [
+                out_ev@[0] = qw0;
+                out_ev@[1] = qw1;
+                ret (qw1 >> 24) & 255;
+            ]
+        ]
+        if ((p & 63) == 63) [
+            if (!(cpu_rdtsc!() < deadline)) [ ret -1; ]
+        ]
+    ]
+    ret -1;
+]
+
+fn xhci_cmd!(xhci, dw0_qw, dw3_ctrl, out_slot) [
+    xhci_trb_push!(xhci@[XHCI_ST_CMD_RING], xhci + (XHCI_ST_CMD_IDX << 3), xhci + (XHCI_ST_CMD_CCS << 3), dw0_qw, dw3_ctrl);
+    xhci_ring_db!(xhci, 0, 0);
+    ev_out = xhci + 1536;
+    cc = xhci_wait_event!(xhci, XHCI_TRB_EVT_CMD, 0, 1000000, ev_out);
+    if (out_slot != 0) [ out_slot@[0] = (ev_out@[1] >> 56) & 255; ]
+    if (cc != 1) [ ret -1; ]
+    ret 0;
+]
+
+fn xhci_ep0_xfer!(xhci, slot_id, ep0_state, setup_qw, buf_len, is_in) [
+    ep0_ring = ep0_state@[0];
+    idx_ptr = ep0_state + 8;
+    ccs_ptr = ep0_state + 16;
+
+    trt = 0;
+    s_dir = 1;
+    if (buf_len > 0) [
+        trt = 2;
+        if (is_in != 0) [ trt = 3; s_dir = 0; ]
+    ]
+
+    xhci_trb_push!(ep0_ring, idx_ptr, ccs_ptr, setup_qw, 8 | (((XHCI_TRB_SETUP << 10) | 64 | (trt << 16)) << 32));
+    if (buf_len > 0) [
+        xhci_trb_push!(ep0_ring, idx_ptr, ccs_ptr, xhci@[XHCI_ST_EP0_BUF], (buf_len & 131071) | (((XHCI_TRB_DATA << 10) | ((is_in & 1) << 16) | 4) << 32));
+    ]
+    xhci_trb_push!(ep0_ring, idx_ptr, ccs_ptr, 0, (((XHCI_TRB_STATUS << 10) | ((s_dir & 1) << 16) | 32) << 32));
+
+    xhci_ring_db!(xhci, slot_id, 1);
+    cc = xhci_wait_event!(xhci, XHCI_TRB_EVT_TRANSFER, slot_id, 1000000, xhci + 1536);
+    if ((cc == 1) | (cc == 13)) [ ret 0; ]
+    ret -1;
+]
+
+fn xhci_calc_interval(speed, b_interval) [
+    if (b_interval < 1) [ b_interval = 1; ]
+    if (!(speed < 3)) [
+        exp = b_interval - 1;
+        if (exp > 15) [ exp = 15; ]
+        ret exp;
+    ]
+    mf = b_interval << 3;
+    exp = 3;
+    loop (e:8 = 3 .. 11) [
+        if ((1 << e) < mf) [ exp = e + 1; ]
+    ]
+    if (exp > 10) [ exp = 10; ]
+    ret exp;
+]
+
+// Shared Interrupt IN endpoint + optional USB Hub slot-context setup
+fn xhci_config_int_ep!(xhci, pmm, slot_id, input_ctx, ep_pack) [
+    // ep_pack: dci | (interval<<8) | (mps<<16) | (speed<<32) | (hub_ports<<40)
+    dci = ep_pack & 31;
+    b_int = (ep_pack >> 8) & 255;
+    mps = (ep_pack >> 16) & 65535;
+    speed = (ep_pack >> 32) & 15;
+    n_ports = (ep_pack >> 40) & 255;
+
+    ring = xhci_ring_alloc!(pmm);
+    if (ring == 0) [ ret 0; ]
+
+    ctx_shift = xhci@[XHCI_ST_CTX_SHIFT];
+    slot_c = input_ctx + (1 << ctx_shift);
+    dw0 = slot_c@[0] & 4294967295;
+    dw1 = (slot_c@[0] >> 32) & 4294967295;
+    if (dci > ((dw0 >> 27) & 31)) [ dw0 = (dw0 & 134217727) | (dci << 27); ]
+    if (n_ports != 0) [
+        dw0 = dw0 | (1 << 26); // Hub = 1
+        dw1 = (dw1 & 16777215) | (n_ports << 24);
+    ]
+    slot_c@[0] = dw0 | (dw1 << 32);
+    input_ctx@[0] = (1 | (1 << dci)) << 32;
+
+    ep_c = input_ctx + ((1 + dci) << ctx_shift);
+    ep_c@[0] = ((xhci_calc_interval(speed, b_int) & 255) << 16) | ((6 | (7 << 3) | (mps << 16)) << 32);
+    ep_c@[1] = ring | 1;
+    ep_c@[2] = 8 | (mps << 16);
+    ep_c@[3] = 0;
+
+    if (xhci_cmd!(xhci, input_ctx, ((XHCI_TRB_CONFIG_EP << 10) | (slot_id << 24)) << 32, 0) != 0) [
+        pmm_free_page!(pmm, ring);
+        ret 0;
+    ]
+    ret ring;
+]
+
+fn xhci_setup_hid_ep!(xhci, pmm, slot_id, speed, desc_info) [
+    // desc_info@[0..2]: proto, dci, (mps | bInterval<<16 | iface_num<<24)
+    // desc_info@[3..6]: cfg_val, cfg_done, input_ctx, ep0_state
+    hid_cnt = xhci@[XHCI_ST_HID_COUNT];
+    if (!(hid_cnt < XHCI_MAX_HID_DEVS)) [ ret 0; ]
+
+    dci = desc_info@[1];
+    ep_meta = desc_info@[2];
+    mps = ep_meta & 65535;
+    b_int = (ep_meta >> 16) & 255;
+    iface_num = (ep_meta >> 24) & 255;
+    ep0_state = desc_info@[6];
+
+    ep_pack = dci | (b_int << 8) | (mps << 16) | (speed << 32);
+    int_ring = xhci_config_int_ep!(xhci, pmm, slot_id, desc_info@[5], ep_pack);
+    if (int_ring == 0) [ ret -1; ]
+
+    if (desc_info@[4] == 0) [
+        if (xhci_ep0_xfer!(xhci, slot_id, ep0_state, (9 << 8) | ((desc_info@[3] & 255) << 16), 0, 0) != 0) [
+            ret -1;
+        ]
+        desc_info@[4] = 1;
+    ]
+    xhci_ep0_xfer!(xhci, slot_id, ep0_state, 33 | (11 << 8) | (iface_num << 32), 0, 0); // Boot Protocol
+    xhci_ep0_xfer!(xhci, slot_id, ep0_state, 33 | (10 << 8) | (iface_num << 32), 0, 0); // SET_IDLE(0)
+
+    dev_base = xhci + ((XHCI_HID_BASE_QW + (hid_cnt << 3)) << 3);
+    dev_base@[HID_DEV_KIND] = desc_info@[0];
+    dev_base@[HID_DEV_SLOT] = slot_id;
+    dev_base@[HID_DEV_DCI] = dci;
+    dev_base@[HID_DEV_RING] = int_ring;
+    dev_base@[HID_DEV_RING_IDX] = 0;
+    dev_base@[HID_DEV_RING_CCS] = 1;
+    dev_base@[HID_DEV_PREV_STATE] = 0;
+    dev_base@[HID_DEV_RPT_BUF] = xhci + XHCI_RPT_DMA_OFFSET + (hid_cnt << 6);
+
+    xhci@[XHCI_ST_HID_COUNT] = hid_cnt + 1;
+    xhci_rearm_hid!(dev_base, xhci);
+    ret 0;
+]
+
+fn xhci_enum_hub!(xhci, pmm, slot_id, topo, hub_meta, input_ctx, ep0_state) [
+    // hub_meta: cfg_val | (hub_dci<<8) | (hub_int<<16) | (hub_mps<<24)
+    speed = topo@[0] & 15;
+    root_port = (topo@[0] >> 8) & 255;
+    cfg_val = hub_meta & 255;
+    hub_dci = (hub_meta >> 8) & 255;
+    hub_int = (hub_meta >> 16) & 255;
+    hub_mps = (hub_meta >> 24) & 65535;
+    ep0_buf = xhci@[XHCI_ST_EP0_BUF];
+
+    xhci_ep0_xfer!(xhci, slot_id, ep0_state, (9 << 8) | (cfg_val << 16), 0, 0);
+    if (xhci_ep0_xfer!(xhci, slot_id, ep0_state, 160 | (6 << 8) | (10496 << 16) | (8 << 48), 8, 1) != 0) [ ret 0; ]
+
+    n_ports = ep0_buf@[2 * 1];
+    pwr_ms = ep0_buf@[5 * 1] << 1;
+    if (pwr_ms < 20) [ pwr_ms = 20; ]
+    if (n_ports > 15) [ n_ports = 15; ]
+
+    if (hub_dci != 0) [
+        xhci_config_int_ep!(xhci, pmm, slot_id, input_ctx, hub_dci | (hub_int << 8) | (hub_mps << 16) | (speed << 32) | (n_ports << 40));
+    ]
+
+    tsc_khz = xhci@[XHCI_ST_TSC_KHZ];
+    loop (hp:16 = 1 .. (n_ports + 1)) [
+        xhci_ep0_xfer!(xhci, slot_id, ep0_state, 35 | (3 << 8) | (8 << 16) | (hp << 32), 0, 0);
+    ]
+    xhci_delay_us!(tsc_khz, pwr_ms * 1000);
+
+    loop (hp:16 = 1 .. (n_ports + 1)) [
+        if (xhci_ep0_xfer!(xhci, slot_id, ep0_state, 163 | (hp << 32) | (4 << 48), 4, 1) == 0) [
+            pst = ep0_buf@[0 * 1] | (ep0_buf@[1 * 1] << 8);
+            if ((pst & 1) != 0) [
+                xhci_ep0_xfer!(xhci, slot_id, ep0_state, 35 | (3 << 8) | (4 << 16) | (hp << 32), 0, 0);
+                xhci_delay_us!(tsc_khz, 25000);
+                if (xhci_ep0_xfer!(xhci, slot_id, ep0_state, 163 | (hp << 32) | (4 << 48), 4, 1) == 0) [
+                    pst2 = ep0_buf@[0 * 1] | (ep0_buf@[1 * 1] << 8);
+                    xhci_ep0_xfer!(xhci, slot_id, ep0_state, 35 | (1 << 8) | (20 << 16) | (hp << 32), 0, 0);
+                    xhci_ep0_xfer!(xhci, slot_id, ep0_state, 35 | (1 << 8) | (16 << 16) | (hp << 32), 0, 0);
+                    if ((pst2 & 2) != 0) [
+                        c_spd = 1; // FS
+                        if ((pst2 & 512) != 0) [ c_spd = 2; ] // LS
+                        if ((pst2 & 1024) != 0) [ c_spd = 3; ] // HS
+                        p_hub = 0;
+                        p_prt = 0;
+                        if ((speed == 3) & ((c_spd == 1) | (c_spd == 2))) [
+                            p_hub = slot_id;
+                            p_prt = hp;
+                        ]
+                        c_topo = input_ctx + 2752;
+                        c_topo@[0] = c_spd | (root_port << 8) | (hp << 16) | (1 << 40);
+                        c_topo@[1] = p_hub | (p_prt << 8);
+                        xhci_enumerate_port!(xhci, pmm, c_topo);
+                    ]
+                ]
+            ]
+        ]
+    ]
+    ret 0;
+]
+
+fn xhci_parse_cfg_and_bind!(xhci, pmm, slot_id, topo, cfg_len, ep0_state, input_ctx) [
+    speed = topo@[0] & 15;
+    depth = (topo@[0] >> 40) & 255;
+    ep0_buf = xhci@[XHCI_ST_EP0_BUF];
+    cfg_val = ep0_buf@[5 * 1];
+
+    cur_cls = 0;
+    cur_iface = 0;
+    is_hub = 0;
+    hub_dci = 0;
+    hub_mps = 1;
+    hub_int = 12;
+    hid_proto = 0;
+    pos = 0;
+    cfg_done = 0;
+
+    loop (scan:128 = 0 .. 128) [
+        if ((pos + 2) < cfg_len) [
+            d_len = ep0_buf@[pos * 1];
+            d_ty = ep0_buf@[(pos + 1) * 1];
+            if (d_len < 2) [
+                pos = cfg_len;
+            ] else [
+                if ((d_ty == USB_DESC_INTERFACE) & (pos + 8 < cfg_len)) [
+                    cur_iface = ep0_buf@[(pos + 2) * 1];
+                    cur_cls   = ep0_buf@[(pos + 5) * 1];
+                    cur_sub   = ep0_buf@[(pos + 6) * 1];
+                    cur_proto = ep0_buf@[(pos + 7) * 1];
+                    if (cur_cls == USB_CLASS_HUB) [ is_hub = 1; ]
+                    if ((cur_cls == USB_CLASS_HID) & (cur_sub == USB_SUBCLASS_BOOT) & (cur_proto == USB_PROTO_KBD)) [
+                        hid_proto = cur_proto;
+                    ]
+                ]
+                if ((d_ty == USB_DESC_ENDPOINT) & (pos + 6 < cfg_len)) [
+                    ep_addr = ep0_buf@[(pos + 2) * 1];
+                    if (((ep_addr & 128) != 0) & ((ep0_buf@[(pos + 3) * 1] & 3) == 3)) [
+                        ep_mps = ep0_buf@[(pos + 4) * 1] | (ep0_buf@[(pos + 5) * 1] << 8);
+                        ep_int = ep0_buf@[(pos + 6) * 1];
+                        dci = ((ep_addr & 15) << 1) | 1;
+                        if ((cur_cls == USB_CLASS_HUB) & (hub_dci == 0)) [
+                            hub_dci = dci; hub_mps = ep_mps; hub_int = ep_int;
+                        ]
+                        if (hid_proto != 0) [
+                            dinfo = input_ctx + 2624;
+                            dinfo@[0] = hid_proto;
+                            dinfo@[1] = dci;
+                            dinfo@[2] = (ep_mps & 65535) | ((ep_int & 255) << 16) | ((cur_iface & 255) << 24);
+                            dinfo@[3] = cfg_val;
+                            dinfo@[4] = cfg_done;
+                            dinfo@[5] = input_ctx;
+                            dinfo@[6] = ep0_state;
+                            if (xhci_setup_hid_ep!(xhci, pmm, slot_id, speed, dinfo) == 0) [ cfg_done = 1; ]
+                            hid_proto = 0;
+                        ]
+                    ]
+                ]
+                pos = pos + d_len;
+            ]
+        ]
+    ]
+
+    if ((is_hub != 0) & (depth == 0)) [
+        xhci_enum_hub!(xhci, pmm, slot_id, topo, (cfg_val & 255) | (hub_dci << 8) | ((hub_int & 255) << 16) | ((hub_mps & 65535) << 24), input_ctx, ep0_state);
+    ]
+    ret 0;
+]
+
+fn xhci_enumerate_port!(xhci, pmm, topo) [
+    speed = topo@[0] & 15;
+    root_port = (topo@[0] >> 8) & 255;
+    route_str = (topo@[0] >> 16) & 1048575;
+    p_hub = topo@[1] & 255;
+    p_prt = (topo@[1] >> 8) & 255;
+
+    dev_ctx = xhci_zpage!(pmm);
+    input_ctx = xhci_zpage!(pmm);
+    ep0_ring = xhci_ring_alloc!(pmm);
+    if ((dev_ctx == 0) | (input_ctx == 0) | (ep0_ring == 0)) [
+        xhci_free3!(pmm, dev_ctx, input_ctx, ep0_ring);
+        ret -1;
+    ]
+
+    slot_out = input_ctx + 2688;
+    if (xhci_cmd!(xhci, 0, (XHCI_TRB_ENABLE_SLOT << 10) << 32, slot_out) != 0) [
+        xhci_free3!(pmm, dev_ctx, input_ctx, ep0_ring);
+        ret -1;
+    ]
+    slot_id = slot_out@[0];
+    if ((slot_id == 0) | (slot_id > xhci@[XHCI_ST_MAX_SLOTS])) [
+        xhci_free3!(pmm, dev_ctx, input_ctx, ep0_ring);
+        ret -1;
+    ]
+
+    dcbaa = xhci@[XHCI_ST_DCBAA];
+    dcbaa@[slot_id] = dev_ctx;
+    ctx_shift = xhci@[XHCI_ST_CTX_SHIFT];
+    mps0 = 8;
+    if (speed == 4) [ mps0 = 512; ]
+    if (speed == 3) [ mps0 = 64; ]
+
+    input_ctx@[0] = 3 << 32; // Add Slot + EP0
+    slot_c = input_ctx + (1 << ctx_shift);
+    slot_c@[0] = (route_str & 1048575) | (speed << 20) | (1 << 27) | ((root_port << 16) << 32);
+    slot_c@[1] = p_hub | (p_prt << 8);
+    ep0_c = input_ctx + (2 << ctx_shift);
+    ep0_c@[0] = ((6 | (4 << 3) | (mps0 << 16)) << 32);
+    ep0_c@[1] = ep0_ring | 1;
+    ep0_c@[2] = 8;
+
+    if (xhci_cmd!(xhci, input_ctx, ((XHCI_TRB_ADDRESS_DEV << 10) | (slot_id << 24)) << 32, 0) != 0) [
+        pmm_free_page!(pmm, input_ctx);
+        ret -1;
+    ]
+
+    ep0_state = input_ctx + 2560;
+    ep0_state@[0] = ep0_ring;
+    ep0_state@[1] = 0;
+    ep0_state@[2] = 1;
+    ep0_buf = xhci@[XHCI_ST_EP0_BUF];
+
+    // Evaluate true bMaxPacketSize0 on LS/FS/HS devices (Device Descriptor byte 7)
+    if (xhci_ep0_xfer!(xhci, slot_id, ep0_state, 128 | (6 << 8) | (256 << 16) | (8 << 48), 8, 1) == 0) [
+        true_mps0 = ep0_buf@[7 * 1];
+        if ((speed < 4) & (true_mps0 > 0) & (true_mps0 != mps0)) [
+            input_ctx@[0] = 2 << 32;
+            ep0_c@[0] = ((6 | (4 << 3) | (true_mps0 << 16)) << 32);
+            xhci_cmd!(xhci, input_ctx, ((XHCI_TRB_EVAL_CTX << 10) | (slot_id << 24)) << 32, 0);
+        ]
+    ]
+
+    // Read Config Descriptor Header (9 B), then full wTotalLength (<= 512)
+    if (xhci_ep0_xfer!(xhci, slot_id, ep0_state, 128 | (6 << 8) | (512 << 16) | (9 << 48), 9, 1) == 0) [
+        total_len = ep0_buf@[2 * 1] | (ep0_buf@[3 * 1] << 8);
+        if (total_len > 512) [ total_len = 512; ]
+        if (total_len > 8) [
+            if (xhci_ep0_xfer!(xhci, slot_id, ep0_state, 128 | (6 << 8) | (512 << 16) | (total_len << 48), total_len, 1) == 0) [
+                xhci_parse_cfg_and_bind!(xhci, pmm, slot_id, topo, total_len, ep0_state, input_ctx);
+            ]
+        ]
+    ]
+
+    pmm_free_page!(pmm, input_ctx);
+    ret 0;
+]
+
+fn xhci_pci_read32!(bdf16, reg) [
+    io_out32!(3320, 2147483648 | ((bdf16 & 65535) << 8) | (reg & 252));
+    ret io_in32!(3324);
+]
+
+fn xhci_pci_write32!(bdf16, reg, val) [
+    io_out32!(3320, 2147483648 | ((bdf16 & 65535) << 8) | (reg & 252));
+    io_out32!(3324, val);
+    ret 0;
+]
+
+fn xhci_enable_msi!(xhci, bdf16) [
+    if (bdf16 == 0) [ ret 0; ]
+    cmd_sts = xhci_pci_read32!(bdf16, 4);
+    if (((cmd_sts >> 20) & 1) == 0) [ ret 0; ]
+
+    cap_ptr = xhci_pci_read32!(bdf16, 52) & 252;
+    cap_msix = 0;
+    cap_msi = 0;
+    loop (h:48 = 0 .. 48) [
+        if (cap_ptr != 0) [
+            c = xhci_pci_read32!(bdf16, cap_ptr);
+            cid = c & 255;
+            if ((cid == PCI_CAP_ID_MSIX) & (cap_msix == 0)) [ cap_msix = cap_ptr; ]
+            if ((cid == PCI_CAP_ID_MSI) & (cap_msi == 0)) [ cap_msi = cap_ptr; ]
+            cap_ptr = (c >> 8) & 252;
+        ]
+    ]
+
+    msg_addr = 4276092928 | ((apic_bsp_id!() & 255) << 12);
+    rt0 = xhci@[XHCI_ST_RT0_BASE];
+    mode = 0;
+
+    if (cap_msix != 0) [
+        tbl_off = xhci_pci_read32!(bdf16, cap_msix + 4);
+        if ((tbl_off & 7) == 0) [
+            entry0 = xhci@[XHCI_ST_BAR] + (tbl_off & 4294967288);
+            mmio_write32!(entry0, msg_addr);
+            mmio_write32!(entry0 + 4, 0);
+            mmio_write32!(entry0 + 8, APIC_VECTOR_XHCI);
+            mmio_write32!(entry0 + 12, 0);
+            c0 = xhci_pci_read32!(bdf16, cap_msix);
+            xhci_pci_write32!(bdf16, cap_msix, (c0 & 3221225471) | 2147483648);
+            mode = 1;
+        ]
+    ]
+    if ((mode == 0) & (cap_msi != 0)) [
+        c_m = xhci_pci_read32!(bdf16, cap_msi);
+        ctl = (c_m >> 16) & 65535;
+        xhci_pci_write32!(bdf16, cap_msi + 4, msg_addr);
+        if ((ctl & 128) != 0) [
+            xhci_pci_write32!(bdf16, cap_msi + 8, 0);
+            xhci_pci_write32!(bdf16, cap_msi + 12, APIC_VECTOR_XHCI);
+        ] else [
+            xhci_pci_write32!(bdf16, cap_msi + 8, APIC_VECTOR_XHCI);
+        ]
+        xhci_pci_write32!(bdf16, cap_msi, (c_m & 65535) | (((ctl & 65423) | 1) << 16));
+        mode = 2;
+    ]
+
+    if (mode != 0) [
+        xhci_pci_write32!(bdf16, 4, cmd_sts | 1024); // Disable legacy INTx
+        mmio_write32!(rt0 + XHCI_IR_IMOD, 0);
+        mmio_write32!(rt0 + XHCI_IR_IMAN, 3);
+        op_base = xhci@[XHCI_ST_OP_BASE];
+        mmio_write32!(op_base + XHCI_OP_USBCMD, mmio_read32!(op_base + XHCI_OP_USBCMD) | XHCI_CMD_INTE);
+        xhci@[XHCI_ST_MSI_MODE] = mode;
+    ]
+    ret mode;
+]
+
+fn xhci_init!(xhci_bar, bdf16, pmm, ring_ptr, tsc_khz) [
+    if (xhci_bar == 0) [ ret 0; ]
+
+    caplen = mmio_read32!(xhci_bar + XHCI_CAP_CAPLENGTH) & 255;
+    hcsp1  = mmio_read32!(xhci_bar + XHCI_CAP_HCSPARAMS1);
+    hcsp2  = mmio_read32!(xhci_bar + XHCI_CAP_HCSPARAMS2);
+    hccp1  = mmio_read32!(xhci_bar + XHCI_CAP_HCCPARAMS1);
+    dboff  = mmio_read32!(xhci_bar + XHCI_CAP_DBOFF) & 4294967292;
+    rtsoff = mmio_read32!(xhci_bar + XHCI_CAP_RTSOFF) & 4294967264;
+
+    // 1. USBLEGSUP BIOS-to-OS Handoff
+    xecp = (hccp1 >> 16) & 65535;
+    if (xecp != 0) [
+        ecp_addr = xhci_bar + (xecp << 2);
+        loop (ec:64 = 0 .. 64) [
+            if (ecp_addr != 0) [
+                ec_val = mmio_read32!(ecp_addr);
+                if ((ec_val & 255) == XHCI_ECAP_USBLEGSUP) [
+                    if ((ec_val & 65536) != 0) [
+                        mmio_write32!(ecp_addr, ec_val | 16777216);
+                        xhci_wait_reg32!(ecp_addr, 65536, 0, 200000, tsc_khz);
+                    ]
+                    ecp_addr = 0;
+                ] else [
+                    nxt = (ec_val >> 8) & 255;
+                    if (nxt == 0) [ ecp_addr = 0; ] else [ ecp_addr = ecp_addr + (nxt << 2); ]
+                ]
+            ]
+        ]
+    ]
+
+    op_base = xhci_bar + caplen;
+    rt0 = xhci_bar + rtsoff + 32;
+
+    // 2. Halt & Reset Host Controller
+    mmio_write32!(op_base + XHCI_OP_USBCMD, mmio_read32!(op_base + XHCI_OP_USBCMD) & 4294967294);
+    xhci_wait_reg32!(op_base + XHCI_OP_USBSTS, XHCI_STS_HCH, XHCI_STS_HCH, 100000, tsc_khz);
+    mmio_write32!(op_base + XHCI_OP_USBCMD, XHCI_CMD_HCRST);
+    if (xhci_wait_reg32!(op_base + XHCI_OP_USBCMD, XHCI_CMD_HCRST, 0, 500000, tsc_khz) != 0) [ ret 0; ]
+    if (xhci_wait_reg32!(op_base + XHCI_OP_USBSTS, XHCI_STS_CNR, 0, 500000, tsc_khz) != 0) [ ret 0; ]
+
+    // 3. Allocate xHCI State, DCBAA, Command/Event Rings, EP0 DMA Page & Scratchpads
+    xhci = xhci_zpage!(pmm);
+    dcbaa = xhci_zpage!(pmm);
+    cmd_ring = xhci_ring_alloc!(pmm);
+    evt_ring = xhci_zpage!(pmm);
+    ep0_buf = xhci_zpage!(pmm);
+    if ((xhci == 0) | (dcbaa == 0) | (cmd_ring == 0) | (evt_ring == 0) | (ep0_buf == 0)) [ ret 0; ]
+
+    max_slots = hcsp1 & 255;
+    if (max_slots > 32) [ max_slots = 32; ]
+    max_ports = (hcsp1 >> 24) & 255;
+
+    xhci@[XHCI_ST_BAR]       = xhci_bar;
+    xhci@[XHCI_ST_OP_BASE]   = op_base;
+    xhci@[XHCI_ST_RT0_BASE]  = rt0;
+    xhci@[XHCI_ST_DB_BASE]   = xhci_bar + dboff;
+    xhci@[XHCI_ST_MAX_PORTS] = max_ports;
+    xhci@[XHCI_ST_MAX_SLOTS] = max_slots;
+    xhci@[XHCI_ST_CTX_SHIFT] = 5 + ((hccp1 >> 2) & 1);
+    xhci@[XHCI_ST_TSC_KHZ]   = tsc_khz;
+    xhci@[XHCI_ST_DCBAA]     = dcbaa;
+    xhci@[XHCI_ST_CMD_RING]  = cmd_ring;
+    xhci@[XHCI_ST_CMD_CCS]   = 1;
+    xhci@[XHCI_ST_EVT_RING]  = evt_ring;
+    xhci@[XHCI_ST_EVT_CCS]   = 1;
+    xhci@[XHCI_ST_EP0_BUF]   = ep0_buf;
+    xhci@[XHCI_ST_BDF]       = bdf16;
+    xhci@[XHCI_ST_RING_PTR]  = ring_ptr;
+
+    max_sp = (((hcsp2 >> 27) & 31) << 5) | ((hcsp2 >> 21) & 31);
+    if (max_sp > 0) [
+        if (max_sp > 512) [ max_sp = 512; ]
+        sp_arr = xhci_zpage!(pmm);
+        if (sp_arr == 0) [ ret 0; ]
+        loop (s:512 = 0 .. max_sp) [
+            sp_p = xhci_zpage!(pmm);
+            if (sp_p == 0) [ ret 0; ]
+            sp_arr@[s] = sp_p;
+        ]
+        dcbaa@[0] = sp_arr;
+        xhci@[XHCI_ST_SCRATCH_ARR] = sp_arr;
+    ]
+
+    // 4. Program CONFIG, DCBAAP, CRCR, ERST, and Start Controller
+    mmio_write32!(op_base + XHCI_OP_CONFIG, max_slots);
+    op_base@[XHCI_OP_DCBAAP_QW] = dcbaa;
+    op_base@[XHCI_OP_CRCR_QW]   = cmd_ring | 1;
+
+    erst = xhci + XHCI_ERST_OFFSET;
+    erst@[0] = evt_ring;
+    erst@[1] = 256;
+    mmio_write32!(rt0 + XHCI_IR_ERSTSZ, 1);
+    rt0@[XHCI_IR_ERDP_QW]   = evt_ring | XHCI_ERDP_EHB;
+    rt0@[XHCI_IR_ERSTBA_QW] = erst;
+
+    mmio_write32!(op_base + XHCI_OP_USBCMD, XHCI_CMD_RS);
+    xhci_wait_reg32!(op_base + XHCI_OP_USBSTS, XHCI_STS_HCH, 0, 100000, tsc_khz);
+
+    // 5. Power & Reset Connected Root Ports, then Enumerate (Single-Level Hubs & HID)
+    pp_changed = 0;
+    loop (rp:64 = 0 .. max_ports) [
+        if ((mmio_read32!(op_base + XHCI_OP_PORTSC_BASE + (rp << 4)) & XHCI_PORTSC_PP) == 0) [
+            xhci_portsc_rmw!(op_base, rp, XHCI_PORTSC_PP, 0);
+            pp_changed = 1;
+        ]
+    ]
+    if (pp_changed != 0) [ xhci_delay_us!(tsc_khz, 20000); ]
+
+    loop (rp:64 = 0 .. max_ports) [
+        p_addr = op_base + XHCI_OP_PORTSC_BASE + (rp << 4);
+        if ((mmio_read32!(p_addr) & XHCI_PORTSC_CCS) != 0) [
+            xhci_portsc_rmw!(op_base, rp, XHCI_PORTSC_PR, 0);
+            if (xhci_wait_reg32!(p_addr, XHCI_PORTSC_PRC, XHCI_PORTSC_PRC, 150000, tsc_khz) == 0) [
+                xhci_portsc_rmw!(op_base, rp, 0, XHCI_PORTSC_W1C_MASK);
+                xhci_delay_us!(tsc_khz, 10000);
+                ps2 = mmio_read32!(p_addr);
+                if ((ps2 & 3) == 3) [
+                    topo = xhci + 1728;
+                    topo@[0] = ((ps2 >> 10) & 15) | ((rp + 1) << 8);
+                    topo@[1] = 0;
+                    xhci_enumerate_port!(xhci, pmm, topo);
+                ]
+            ]
+        ]
+    ]
+
+    // 6. Enable PCIe MSI-X/MSI (Vector 33) & drain any pre-MSI events
+    xhci_enable_msi!(xhci, bdf16);
+    xhci_poll!(xhci);
+    ret xhci;
+]

@@ -1,0 +1,340 @@
+// ==========================================
+// steel/sys/packager_kernel.sinc
+// S.T.E.E.L. .safe to Relocatable SHARK.BIN Kernel Packager
+// Emits [64 B Header | 2048 B KCPU | 64 B k_safe ("TRG\0" + Thunks 2..1) | Code]
+// ==========================================
+
+fn emit_cpu_block!(img, k_cpu_off, k_safe_off) [
+    k_cpu = img + k_cpu_off;
+
+    // 1. cpu_reload_gdt (0x000..0x01F)
+    k_cpu@[0] = -2842237487301983985;
+    k_cpu@[1] = -1689165906228363122;
+    k_cpu@[2] = 3322380028010;
+    k_cpu@[3] = -8029758964998057984;
+
+    // 2. cpu_load_idt and ltr 0x18 (0x020..0x03F)
+    k_cpu@[4] = 4318986533142799;
+    k_cpu@[5] = -8029759185026497576;
+    k_cpu@[6] = -8029759185026510704;
+    k_cpu@[7] = -8029759185026510704;
+
+    // 3. io_out32 (0x040..0x05F)
+    k_cpu@[8] = -8015299258621702007;
+    k_cpu@[9] = -8029759185026510704;
+    k_cpu@[10] = -8029759185026510704;
+    k_cpu@[11] = -8029759185026510704;
+
+    // 4. cpu_get_isr_stubs & fb_base_slot (0x060..0x07F)
+    k_cpu@[12] = 5188146771016911176;
+    k_cpu@[13] = -8015562911779781235;
+    k_cpu@[14] = -8029759185026510704;
+    k_cpu@[15] = 0; // fb_base_slot at 0x078
+
+    // 5. common_fault_handler (0x080..0x0FF)
+    k_cpu@[16] = -4998881157251846;
+    k_cpu@[17] = -5038273442319106049;
+    k_cpu@[18] = 72058388623589376;
+    k_cpu@[19] = -70712327466940160;
+    k_cpu@[20] = 7378027327402702281;
+    k_cpu@[21] = -7998977925942545222;
+    loop (h:10 = 22 .. 32) [
+        k_cpu@[h] = -8029759185026510704;
+    ]
+
+    // 6. 32 ISR stubs (0x100..0x2FF, Words 32..95)
+    k_cpu@[32] = -149632358678422;
+    k_cpu@[33] = -8029759185026510593;
+    k_cpu@[34] = -167224527945622;
+    k_cpu@[35] = -8029759185026510593;
+    k_cpu@[36] = -184816697212822;
+    k_cpu@[37] = -8029759185026510593;
+    k_cpu@[38] = -202408866480022;
+    k_cpu@[39] = -8029759185026510593;
+    k_cpu@[40] = -220001035747222;
+    k_cpu@[41] = -8029759185026510593;
+    k_cpu@[42] = -237593205014422;
+    k_cpu@[43] = -8029759185026510593;
+    k_cpu@[44] = -255185374281622;
+    k_cpu@[45] = -8029759185026510593;
+    k_cpu@[46] = -272777543548822;
+    k_cpu@[47] = -8029759185026510593;
+    k_cpu@[48] = -7998392942607136662;
+    k_cpu@[49] = -8029759185026510704;
+    k_cpu@[50] = -307961882083222;
+    k_cpu@[51] = -8029759185026510593;
+    k_cpu@[52] = -7998392943144007062;
+    k_cpu@[53] = -8029759185026510704;
+    k_cpu@[54] = -7998392943412442262;
+    k_cpu@[55] = -8029759185026510704;
+    k_cpu@[56] = -7998392943680877462;
+    k_cpu@[57] = -8029759185026510704;
+    k_cpu@[58] = -7998392943949312662;
+    k_cpu@[59] = -8029759185026510704;
+    k_cpu@[60] = -7998392944217747862;
+    k_cpu@[61] = -8029759185026510704;
+    k_cpu@[62] = -413514897686422;
+    k_cpu@[63] = -8029759185026510593;
+    k_cpu@[64] = -431107066953622;
+    k_cpu@[65] = -8029759185026510593;
+    k_cpu@[66] = -7998392945023053462;
+    k_cpu@[67] = -8029759185026510704;
+    k_cpu@[68] = -466291405488022;
+    k_cpu@[69] = -8029759185026510593;
+    k_cpu@[70] = -483883574755222;
+    k_cpu@[71] = -8029759185026510593;
+    k_cpu@[72] = -501475744022422;
+    k_cpu@[73] = -8029759185026510593;
+    k_cpu@[74] = -7998392946096794262;
+    k_cpu@[75] = -8029759185026510704;
+    k_cpu@[76] = -536660082556822;
+    k_cpu@[77] = -8029759185026510593;
+    k_cpu@[78] = -554252251824022;
+    k_cpu@[79] = -8029759185026510593;
+    k_cpu@[80] = -571844421091222;
+    k_cpu@[81] = -8029759185026510593;
+    k_cpu@[82] = -589436590358422;
+    k_cpu@[83] = -8029759185026510593;
+    k_cpu@[84] = -607028759625622;
+    k_cpu@[85] = -8029759185026510593;
+    k_cpu@[86] = -624620928892822;
+    k_cpu@[87] = -8029759185026510593;
+    k_cpu@[88] = -642213098160022;
+    k_cpu@[89] = -8029759185026510593;
+    k_cpu@[90] = -659805267427222;
+    k_cpu@[91] = -8029759185026510593;
+    k_cpu@[92] = -677397436694422;
+    k_cpu@[93] = -8029759185026510593;
+    k_cpu@[94] = -694989605961622;
+    k_cpu@[95] = -8029759185026510593;
+
+    // 7. 16 IRQ stubs (0x300..0x3FF, Words 96..127)
+    k_cpu@[96]  = -8029759805927121943; // Vector 32 (Timer) -> 0x420
+    k_cpu@[97]  = -8029759185026510704;
+    k_cpu@[98]  = -8029759805927117847; // Vector 33 (Keyboard) -> 0x440
+    k_cpu@[99]  = -8029759185026510704;
+    k_cpu@[100] = -8029759805927101463; // Vector 34 -> 0x490
+    k_cpu@[101] = -8029759185026510704;
+    k_cpu@[102] = -8029759805927105559; // Vector 35 -> 0x490
+    k_cpu@[103] = -8029759185026510704;
+    k_cpu@[104] = -8029759805927109655; // Vector 36 -> 0x490
+    k_cpu@[105] = -8029759185026510704;
+    k_cpu@[106] = -8029759805927113751; // Vector 37 -> 0x490
+    k_cpu@[107] = -8029759185026510704;
+    k_cpu@[108] = -8029759805927117847; // Vector 38 -> 0x490
+    k_cpu@[109] = -8029759185026510704;
+    k_cpu@[110] = -8029759805927121943; // Vector 39 -> 0x490
+    k_cpu@[111] = -8029759185026510704;
+    k_cpu@[112] = -8029759805927121943; // Vector 40 -> 0x4A0
+    k_cpu@[113] = -8029759185026510704;
+    k_cpu@[114] = -8029759805927126039; // Vector 41 -> 0x4A0
+    k_cpu@[115] = -8029759185026510704;
+    k_cpu@[116] = -8029759805927130135; // Vector 42 -> 0x4A0
+    k_cpu@[117] = -8029759185026510704;
+    k_cpu@[118] = -8029759805927134231; // Vector 43 -> 0x4A0
+    k_cpu@[119] = -8029759185026510704;
+    k_cpu@[120] = -8029759805927138327; // Vector 44 -> 0x4A0
+    k_cpu@[121] = -8029759185026510704;
+    k_cpu@[122] = -8029759805927142423; // Vector 45 -> 0x4A0
+    k_cpu@[123] = -8029759185026510704;
+    k_cpu@[124] = -8029759805927146519; // Vector 46 -> 0x4A0
+    k_cpu@[125] = -8029759185026510704;
+    k_cpu@[126] = -8029759805927150615; // Vector 47 -> 0x4A0
+    k_cpu@[127] = -8029759185026510704;
+
+    // 8. cpu_get_irq_stubs_entry & irq_bss_slot (0x400..0x41F, Words 128..131)
+    k_cpu@[128] = 5188146771016911176;
+    k_cpu@[129] = -8015281436830333555;
+    k_cpu@[130] = -8029759185026510704;
+    k_cpu@[131] = 0; // irq_bss_slot at 0x418
+
+    // 9. x2APIC TSC-Deadline Timer Handler (Vector 32, 0x420..0x43F, Words 132..135)
+    // Increments [bss_base + TIMER_BSS_OFFSET (0x6680)], then jumps to shared x2APIC EOI
+    k_cpu@[132] = -5042861622800048;
+    k_cpu@[133] = 28851747741564927;
+    k_cpu@[134] = -8029918135593342720;
+    k_cpu@[135] = -8029759185026510704;
+
+    // 10. xHCI MSI-X/MSI Event Wakeup Handler (Vector 33, 0x440..0x48F, Words 136..145)
+    // Increments [bss_base + 0x6690 (TIMER_BSS_OFFSET + 16)], then jumps to shared x2APIC EOI
+    k_cpu@[136] = -14050060877541040;
+    k_cpu@[137] = 28869339927609343;
+    k_cpu@[138] = -8029918135595439872;
+    k_cpu@[139] = -8029759185026510704;
+    k_cpu@[140] = -8029759185026510704;
+    k_cpu@[141] = -8029759185026510704;
+    k_cpu@[142] = -8029759185026510704;
+    k_cpu@[143] = -8029759185026510704;
+    k_cpu@[144] = -8029759185026510704;
+    k_cpu@[145] = -8029759185026510704;
+
+    // 11. irq_master_stub (0x490..0x49F, Words 146..147 -> jmp 0x4B0)
+    k_cpu@[146] = -8029759185026539797;
+    k_cpu@[147] = -8029759185026510704;
+
+    // 12. irq_slave_stub (0x4A0..0x4AF, Words 148..149 -> jmp 0x4B0)
+    k_cpu@[148] = -8029759185026543893;
+    k_cpu@[149] = -8029759185026510704;
+
+    // 13. Shared x2APIC EOI Common Routine (0x4B0..0x4CF, Words 150..153: wrmsr 0x80B; iretq)
+    k_cpu@[150] = -5056924730052685488;
+    k_cpu@[151] = 6438511458262190091;
+    k_cpu@[152] = -8029759185022400424;
+    k_cpu@[153] = -8029759185026510704;
+
+    loop (p1:58 = 154 .. 212) [
+        k_cpu@[p1] = -8029759185026510704;
+    ]
+
+    loop (p2:44 = 212 .. 256) [
+        k_cpu@[p2] = -8029759185026510704;
+    ]
+
+    // Thunk 22 (k_code_start - 704, Words 176..179: cpu_wait_irq! = sti; hlt; ret)
+    k_cpu@[176] = -8029759185023142661;
+
+    // Thunk 21 (k_code_start - 672, Words 180..183: io_in32!)
+    k_cpu@[180] = -8029758964419098266;
+
+    // Thunk 20 (k_code_start - 640, Words 184..187: cpu_wrmsr! with mfence)
+    k_cpu@[184] = -5904464393822220151;
+    k_cpu@[185] = -8029759184177197072;
+
+    // Thunk 19 (k_code_start - 608, Words 188..191: cpu_rdmsr!)
+    k_cpu@[188] = 668820702941950479;
+    k_cpu@[189] = -8029759185026497584;
+
+    // Thunk 18 (k_code_start - 576, Words 192..195: cpu_rdtsc! with lfence)
+    k_cpu@[192] = -2107323775075176945;
+    k_cpu@[193] = -8029758964918302688;
+
+    // Thunk 17 (k_code_start - 544, Words 196..199: cpu_get_fn_addr)
+    k_cpu@[196] = -267855016800974008;
+    k_cpu@[197] = -8029759184167239352;
+    k_cpu@[198] = -8029759185026510704;
+    k_cpu@[199] = -8029759185026510704;
+
+    // Thunk 16 (k_code_start - 512, Words 200..203: cpu_write_cr0_wp)
+    k_cpu@[200] = 537275829852315663;
+    k_cpu@[201] = 2667796739536191501;
+    k_cpu@[202] = -4341432588670402561;
+    k_cpu@[203] = -8029759185026510704;
+
+    // Thunk 15 (k_code_start - 480, Words 204..207: invlpg (%rcx); ret; nop x 4)
+    k_cpu@[204] = -8029759184176611057;
+
+    // Thunk 14 (k_code_start - 448, Words 208..211: mov %cr3, %rax; ret; nop x 4)
+    k_cpu@[208] = -8029759184166182897;
+
+    // Thunk 13 (k_code_start - 416, Words 212..215: jmp cpu_get_irq_stubs at 0x400)
+    k_cpu@[212] = -8029758706415739927;
+
+    // Thunk 12 (k_code_start - 384, Words 216..219: hlt; ret; nop x 6)
+    k_cpu@[216] = -8029759185026497548;
+
+    // Thunk 11 (k_code_start - 352, Words 220..223: test rcx, rcx; jz +2; sti; ret; cli; ret; nop x 7)
+    k_cpu@[220] = -377181955801119416;
+    k_cpu@[221] = -8029759185026510653;
+
+    // Thunk 10 (k_code_start - 320, Words 224..227: mov al, dl; mov dx, cx; out dx, al; ret; nop x 2)
+    k_cpu@[224] = -8015300358133329784;
+
+    // Thunk 9 (k_code_start - 288, Words 228..231: mov dx, cx; xor eax, eax; in al, dx; ret; nop)
+    k_cpu@[228] = -8015302601576117914;
+
+    // Thunk 8 (k_code_start - 256, Words 232..235: mov r11, rcx; mov rcx, rdx; call r11; ret; nop x 6)
+    k_cpu@[232] = -53531332989712055;
+    k_cpu@[233] = -8029759185026497581;
+
+    // Thunk 7 (k_code_start - 224, Words 236..239: sfence; mov [rcx], edx; ret; nop x 2)
+    k_cpu@[236] = -8029703655504957937;
+
+    // Thunk 6 (k_code_start - 192, Words 240..243: mov eax, [rcx]; ret; nop x 5)
+    k_cpu@[240] = -8029759185023204981;
+
+    // Thunk 5 (k_code_start - 160, Words 244..247: cli; hlt; jmp .-1; nop x 4)
+    k_cpu@[244] = -8029759183191804678;
+
+    // Thunk 4 (k_code_start - 128, Words 248..251: jmp cpu_get_isr_stubs at 0x060)
+    k_cpu@[248] = -8029758706416051223;
+
+    // Thunk 3 (k_code_start - 96, Words 252..255: jmp cpu_load_idt at 0x020)
+    k_cpu@[252] = -8029758706416075799;
+
+    // Kernel Container Header & Reverse Thunks 1 and 2 in k_safe
+    k_safe = img + k_safe_off;
+
+    // Thunk 2 (k_safe_off + 0, Words 0..3: starts with "TRG\0", jmp cpu_reload_gdt at 0x000)
+    k_safe@[0] = 6525874202271502932;
+    k_safe@[1] = -8029636660759959204;
+    k_safe@[2] = -8029759185026510704;
+    k_safe@[3] = -8029759185026510704;
+
+    // Thunk 1 (k_safe_off + 32, Words 4..7: jmp io_out32 at 0x040)
+    k_safe@[4] = -8029758706416083991;
+    k_safe@[5] = -8029759185026510704;
+    k_safe@[6] = -8029759185026510704;
+    k_safe@[7] = -8029759185026510704;
+
+    ret 0;
+]
+
+fn pack_safe_to_kernel!(kernel_path, out_path, arena) [
+    k_fd = sys_open_read!(kernel_path);
+    if (k_fd < 0) [
+        ret 1;
+    ]
+
+    hdr = arena_alloc_words!(arena, 4);
+    hbytes = sys_read!(k_fd, hdr, 32);
+    if (hbytes != 32) [
+        sys_close!(k_fd);
+        ret 2;
+    ]
+
+    magic = hdr@[0] & 4294967295;
+    version = hdr@[0] >> 32;
+    k_code_len = hdr@[1];
+    k_main_off = hdr@[2];
+    if ((magic != 1396786245) | (version != 1) | (hdr@[3] != 32) | (!(k_main_off < k_code_len))) [
+        sys_close!(k_fd);
+        ret 2;
+    ]
+
+    total_size = SHARK_BIN_CODE_OFF + k_code_len;
+    total_words = (total_size + 7) >> 3;
+    img = arena_alloc_words!(arena, total_words);
+    loop (w:1000000 = 0 .. total_words) [
+        img@[w] = 0;
+    ]
+
+    img@[SHARK_HDR_LENS_MAGIC]    = SHARK_HDR_MAGIC_VER;
+    img@[SHARK_HDR_LENS_KSAFE]    = SHARK_BIN_KSAFE_OFF;
+    img@[SHARK_HDR_LENS_CODE]     = SHARK_BIN_CODE_OFF;
+    img@[SHARK_HDR_LENS_ENTRY]    = SHARK_BIN_CODE_OFF + k_main_off;
+    img@[SHARK_HDR_LENS_CODE_LEN] = k_code_len;
+    img@[SHARK_HDR_LENS_TOTAL_SZ] = total_size;
+    img@[SHARK_HDR_LENS_MAIN_OFF] = k_main_off;
+    img@[SHARK_HDR_LENS_RESERVED] = 0;
+
+    emit_cpu_block!(img, SHARK_BIN_KCPU_OFF, SHARK_BIN_KSAFE_OFF);
+
+    k_read = sys_read!(k_fd, img + SHARK_BIN_CODE_OFF, k_code_len);
+    sys_close!(k_fd);
+    if (k_read != k_code_len) [
+        ret 5;
+    ]
+
+    out_fd = sys_open_write!(out_path);
+    if (out_fd < 0) [
+        ret 3;
+    ]
+
+    written = sys_write!(out_fd, img, total_size);
+    sys_close!(out_fd);
+    if (written != total_size) [
+        ret 6;
+    ]
+
+    ret 0;
+]

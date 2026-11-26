@@ -11,7 +11,9 @@ artifact lit_shell [
 deps [
     spine/data/abi_defs.sinc;
     spine/data/cli_defs.sinc;
+    spine/data/input_defs.sinc;
     spine/pure/cmd_line.sinc;
+    spine/pure/input_evt.sinc;
     lit/data/lit_defs.sinc;
     lit/pure/slots.sinc;
     case/data/case_defs.sinc;

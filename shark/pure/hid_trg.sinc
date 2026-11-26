@@ -1,0 +1,63 @@
+// ==========================================
+// shark/pure/hid_trg.sinc
+// Direct USB HID Usage ID (0x04..0x52) -> Native TRG Decoder (Zero ASCII)
+// ==========================================
+
+const HID_UNSHIFT_0 = 2097581328956387311;
+const HID_UNSHIFT_1 = 2676302708056530718;
+const HID_UNSHIFT_2 = 3255024090761144102;
+const HID_UNSHIFT_3 = 3906084542480396078;
+const HID_UNSHIFT_4 = 3764231088629168183;
+const HID_UNSHIFT_5 = -687518088422297615;
+const HID_UNSHIFT_6 = -144959613090958345;
+const HID_UNSHIFT_7 = -1157442765409226893;
+
+const HID_SHIFT_0   = 216736835604312047;
+const HID_SHIFT_1   = 795458214266537220;
+const HID_SHIFT_2   = 1374179596971150604;
+const HID_SHIFT_3   = 9113061437241431316;
+const HID_SHIFT_4   = -723827774011965569;
+const HID_SHIFT_5   = -544667338718384143;
+const HID_SHIFT_6   = 8608205172355595001;
+const HID_SHIFT_7   = -1157442765409226883;
+
+fn hid_usage_qw(qw_idx, is_shift) [
+    if (is_shift == 0) [
+        if (qw_idx == 0) [ ret HID_UNSHIFT_0; ]
+        if (qw_idx == 1) [ ret HID_UNSHIFT_1; ]
+        if (qw_idx == 2) [ ret HID_UNSHIFT_2; ]
+        if (qw_idx == 3) [ ret HID_UNSHIFT_3; ]
+        if (qw_idx == 4) [ ret HID_UNSHIFT_4; ]
+        if (qw_idx == 5) [ ret HID_UNSHIFT_5; ]
+        if (qw_idx == 6) [ ret HID_UNSHIFT_6; ]
+        ret HID_UNSHIFT_7;
+    ]
+    if (qw_idx == 0) [ ret HID_SHIFT_0; ]
+    if (qw_idx == 1) [ ret HID_SHIFT_1; ]
+    if (qw_idx == 2) [ ret HID_SHIFT_2; ]
+    if (qw_idx == 3) [ ret HID_SHIFT_3; ]
+    if (qw_idx == 4) [ ret HID_SHIFT_4; ]
+    if (qw_idx == 5) [ ret HID_SHIFT_5; ]
+    if (qw_idx == 6) [ ret HID_SHIFT_6; ]
+    ret HID_SHIFT_7;
+]
+
+fn hid_usage_to_trg(usage, mods) [
+    if (usage == 41) [ ret TRG_ESC; ]
+    if (usage == 79) [ ret TRG_ARROW_RIGHT; ]
+    if (usage == 80) [ ret TRG_ARROW_LEFT; ]
+    if (usage == 81) [ ret TRG_ARROW_DOWN; ]
+    if (usage == 82) [ ret TRG_ARROW_UP; ]
+    if ((usage < 4) | (!(usage < 64))) [
+        ret -1;
+    ]
+    is_shift = (mods & MOD_ANY_SHIFT) != 0;
+    qw = hid_usage_qw(usage >> 3, is_shift);
+    sh = (usage & 7) << 3;
+    code = (qw >> sh) & 255;
+    if (code == TRG_NONE) [
+        ret -1;
+    ]
+    ret code;
+]
+

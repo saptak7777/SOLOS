@@ -9,6 +9,7 @@ artifact stabl [
 ]
 
 deps [
+    spine/data/boot_defs.sinc;
 ]
 
 flags [

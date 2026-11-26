@@ -44,25 +44,16 @@ fn exocall_dispatch!(arena, op, a1, a2, a3, a4) [
         nvme = arena@[ARENA_LENS_NVME];
         ret nvme_rw_sectors!(nvme, a1, a2, a3, a4);
     ]
-    if (op == EXOCALL_WAIT_TICKS) [
+    if (op == EXOCALL_SLEEP_US) [
         timer_ticks_ptr = arena@[ARENA_LENS_TIMER];
-        timer_ticks_ptr@[0] = 0;
-        cpu_set_interrupts!(1);
-        done = 0;
-        loop (w:1000 = 0 .. 1000) [
-            if (done == 0) [
-                cpu_wait_interrupt!();
-                ticks = timer_ticks_ptr@[0];
-                if (!(ticks < a1)) [
-                    done = 1;
-                ]
-            ]
-        ]
-        cpu_set_interrupts!(0);
-        ret done;
+        xhci = arena@[ARENA_LENS_XHCI];
+        ret tsc_sleep_us!(timer_ticks_ptr, a1, a2, xhci);
     ]
     if (op == EXOCALL_SLOT_LOAD_MEM) [
         ret lit_slot_load_mem!(arena, a1, a2, a3, a4);
+    ]
+    if (op == EXOCALL_INPUT_POLL) [
+        ret xhci_poll!(arena@[ARENA_LENS_XHCI]);
     ]
     ret -1;
 ]
@@ -88,7 +79,40 @@ fn kernel_halt_err!(code) [
     ret 1;
 ]
 
-fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
+fn kernel_main!(boot_info) [
+    if (boot_info == 0) [
+        ret kernel_halt_err!(ERR_BAD_BOOT_INFO);
+    ]
+    if (boot_info@[BOOT_LENS_MAGIC_VER] != BOOT_INFO_MAGIC_VER) [
+        ret kernel_halt_err!(ERR_BAD_BOOT_INFO);
+    ]
+
+    shark_base = boot_info@[BOOT_LENS_SHARK_BASE];
+    shark_size = boot_info@[BOOT_LENS_SHARK_SIZE];
+    shark_hash = boot_info@[BOOT_LENS_SHARK_HASH];
+    font_base  = boot_info@[BOOT_LENS_FONT_BASE];
+    font_size  = boot_info@[BOOT_LENS_FONT_SIZE];
+    font_hash  = boot_info@[BOOT_LENS_FONT_HASH];
+    if ((shark_base == 0) | (!(shark_size > SHARK_BIN_CODE_OFF)) | (font_base == 0) | (font_size != 4096)) [
+        ret kernel_halt_err!(ERR_BAD_BOOT_INFO);
+    ]
+    // Verify loaded image & font hashes before cpu_init! patches k_cpu slots
+    if ((case_fnv1a_64(shark_base, shark_size) != shark_hash) | (case_fnv1a_64(font_base, font_size) != font_hash)) [
+        ret kernel_halt_err!(ERR_BAD_BOOT_INFO);
+    ]
+
+    fb_base     = boot_info@[BOOT_LENS_FB_BASE];
+    dims        = boot_info@[BOOT_LENS_FB_DIMS];
+    stride_caps = boot_info@[BOOT_LENS_FB_STRIDE_CAPS];
+    ram_tape    = boot_info@[BOOT_LENS_RAM_TAPE];
+    ram_count   = boot_info@[BOOT_LENS_REGION_COUNT];
+    storage_bar = boot_info@[BOOT_LENS_STORAGE_BAR];
+    xhci_bar    = boot_info@[BOOT_LENS_XHCI_BAR];
+    tsc_khz     = boot_info@[BOOT_LENS_TSC_KHZ];
+    if (tsc_khz < 10000) [
+        ret kernel_halt_err!(ERR_BAD_BOOT_INFO);
+    ]
+
     width = (dims >> 32) & 4294967295;
     height = dims & 4294967295;
     stride = (stride_caps >> 32) & 4294967295;
@@ -116,7 +140,7 @@ fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
     state_ptr = bss_base + 25088;
     state_ptr@[CONSOLE_LENS_FB_BASE] = fb_base;
     state_ptr@[CONSOLE_LENS_BACKBUFFER] = backbuffer;
-    state_ptr@[CONSOLE_LENS_FONT_PTR] = bss_base - 4096;
+    state_ptr@[CONSOLE_LENS_FONT_PTR] = font_base;
     state_ptr@[CONSOLE_LENS_WIDTH] = width;
     state_ptr@[CONSOLE_LENS_HEIGHT] = height;
     state_ptr@[CONSOLE_LENS_STRIDE] = stride;
@@ -128,25 +152,24 @@ fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
     live_mask_ptr = bss_base + LIVE_SIP_BSS_OFFSET;
     cap_init_table!(cap_table, live_mask_ptr);
 
-    // 5. NVMe Hardware Controller Bring-up
+    // 5. NVMe Hardware Controller Bring-up (TSC-Calibrated Deadlines)
     nvme = 0;
     if ((cpu_caps & 2) != 0) [
-        nvme = nvme_init!(storage_bar, pmm);
+        nvme = nvme_init!(storage_bar, pmm, tsc_khz);
         if ((nvme == 0) | (nvme_create_io_queues!(nvme, pmm) != 0)) [
             ret kernel_halt_err!(ERR_NVME_TIMEOUT);
         ]
     ]
 
-    // 6. PIC, PIT & Keyboard Ring Hardware Bring-up
+    // 6. Legacy-Free x2APIC, TSC-Deadline, Input Ring & xHCI USB Bring-up
     timer_ticks_ptr = bss_base + TIMER_BSS_OFFSET;
+    timer_ticks_ptr@[TIMER_LENS_XHCI_SEQ] = 0;
     ring_ptr = bss_base + RING_BSS_OFFSET;
     ring_init!(ring_ptr);
-    pic_init!(32, 40);
-    pit_init!(1000);
-    ps2_drain!();
-    pic_unmask_irq!(0);
-    pic_unmask_irq!(1);
+    apic_init!(ram_tape, tsc_khz);
     cpu_init_irqs!(ram_tape);
+    xhci_bdf = (cpu_caps >> 8) & 65535;
+    xhci = xhci_init!(xhci_bar, xhci_bdf, pmm, ring_ptr, tsc_khz);
 
     // 7. Pack Linear Arena Exchange Table
     cr3_base = paging_get_cr3_base!();
@@ -167,6 +190,8 @@ fn kernel_main!(fb_base, dims, stride_caps, ram_tape, ram_count, storage_bar) [
     arena_ptr@[ARENA_LENS_LIT_TABLE] = table;
     arena_ptr@[ARENA_LENS_META_BUF]  = meta_buf;
     arena_ptr@[ARENA_LENS_EXOCALL]   = dispatch_fn;
+    arena_ptr@[ARENA_LENS_BOOT_INFO] = boot_info;
+    arena_ptr@[ARENA_LENS_XHCI]      = xhci;
 
     loop (cl:256 = 0 .. 256) [
         table@[cl] = 0;

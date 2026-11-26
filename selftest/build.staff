@@ -9,7 +9,10 @@ artifact selftest [
 ]
 
 deps [
+    spine/data/boot_defs.sinc;
     spine/data/abi_defs.sinc;
+    spine/data/input_defs.sinc;
+    spine/pure/input_evt.sinc;
     lit/data/lit_defs.sinc;
     lit/pure/slots.sinc;
     case/data/case_defs.sinc;
@@ -23,12 +26,12 @@ deps [
     shark/data/console_defs.sinc;
     shark/data/cap_defs.sinc;
     shark/data/input_defs.sinc;
+    shark/data/xhci_defs.sinc;
     shark/pure/cap.sinc;
     shark/pure/math.sinc;
+    shark/pure/hid_trg.sinc;
     shark/sys/cap.sinc;
     shark/sys/ring.sinc;
-    lit_shell/data/input_defs.sinc;
-    lit_shell/pure/input.sinc;
 ]
 
 flags [

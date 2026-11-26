@@ -1,7 +1,15 @@
 // ==========================================
 // stabl/pure/stabl_map.sinc
-// Pure compaction of UEFI memory map to 1-QWORD SINC RAM Tape
+// Pure UEFI memory map compaction & FNV-1a bootloader hashing
 // ==========================================
+
+fn boot_fnv1a_64(buf, byte_len) [
+    h = BOOT_FNV_OFFSET;
+    loop (i:10000000 = 0 .. byte_len) [
+        h = (h ^ buf@[i * 1]) * BOOT_FNV_PRIME;
+    ]
+    ret h;
+]
 
 fn compact_ram_tape!(map_buf, map_size, desc_size, ram_tape) [
     num_descs = 0;

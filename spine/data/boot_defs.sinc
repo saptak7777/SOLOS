@@ -1,0 +1,45 @@
+// ==========================================
+// spine/data/boot_defs.sinc
+// Shared STABL <-> SHARK 128-Byte BootInfo & SHARK.BIN Contract (Strict Law 15)
+// ==========================================
+
+const BOOT_INFO_SIZE           = 128;
+const BOOT_INFO_MAGIC_VER      = 5625368403; // "SOLO" | (version 1 << 32)
+
+// 128-Byte Cache-Aligned BootInfo Lenses (16 QWORDs)
+const BOOT_LENS_MAGIC_VER      = 0;  // +0x00: Magic & ABI Version
+const BOOT_LENS_FB_BASE        = 1;  // +0x08: GOP Linear Framebuffer (BGRA8)
+const BOOT_LENS_FB_DIMS        = 2;  // +0x10: (width << 32) | height
+const BOOT_LENS_FB_STRIDE_CAPS = 3;  // +0x18: (fb_stride << 32) | cpu_caps
+const BOOT_LENS_RAM_TAPE       = 4;  // +0x20: Compacted 1-QWORD RAM Tape Base
+const BOOT_LENS_REGION_COUNT   = 5;  // +0x28: Valid Usable RAM Region Count
+const BOOT_LENS_STORAGE_BAR    = 6;  // +0x30: Primary NVMe (64-bit BAR0) or AHCI (BAR5)
+const BOOT_LENS_XHCI_BAR       = 7;  // +0x38: Primary xHCI (0x0C0330, 64-bit BAR0/1) or 0
+const BOOT_LENS_BSS_BASE       = 8;  // +0x40: Kernel 64 KB BSS & Stack Base (EfiLoaderData)
+const BOOT_LENS_SHARK_BASE     = 9;  // +0x48: Loaded \EFI\SOLOS\SHARK.BIN Base
+const BOOT_LENS_SHARK_SIZE     = 10; // +0x50: Loaded SHARK.BIN Byte Size
+const BOOT_LENS_SHARK_HASH     = 11; // +0x58: 64-Bit FNV-1a Hash of SHARK.BIN
+const BOOT_LENS_FONT_BASE      = 12; // +0x60: Loaded \EFI\SOLOS\FONT.BIN Base (4096 B)
+const BOOT_LENS_FONT_SIZE      = 13; // +0x68: Loaded FONT.BIN Byte Size (4096)
+const BOOT_LENS_FONT_HASH      = 14; // +0x70: 64-Bit FNV-1a Hash of FONT.BIN
+const BOOT_LENS_TSC_KHZ        = 15; // +0x78: Calibrated TSC Frequency (kHz)
+
+// SHARK.BIN 64-Byte Container Header (8 QWORDs at file offset 0)
+// Layout: [64 B Header | 2048 B KCPU | 64 B k_safe ("TRG\0" + Thunks 2..1) | N B Code]
+const SHARK_HDR_MAGIC_VER      = 5558650963; // "SHRK" | (version 1 << 32)
+const SHARK_BIN_KCPU_OFF       = 64;         // +0x0040
+const SHARK_BIN_KSAFE_OFF      = 2112;       // +0x0840
+const SHARK_BIN_CODE_OFF       = 2176;       // +0x0880
+const SHARK_HDR_LENS_MAGIC     = 0;          // +0x00
+const SHARK_HDR_LENS_KSAFE     = 1;          // +0x08
+const SHARK_HDR_LENS_CODE      = 2;          // +0x10
+const SHARK_HDR_LENS_ENTRY     = 3;          // +0x18: SHARK_BIN_CODE_OFF + k_main_off
+const SHARK_HDR_LENS_CODE_LEN  = 4;          // +0x20
+const SHARK_HDR_LENS_TOTAL_SZ  = 5;          // +0x28
+const SHARK_HDR_LENS_MAIN_OFF  = 6;          // +0x30
+const SHARK_HDR_LENS_RESERVED  = 7;          // +0x38
+
+// Boot FNV-1a 64-Bit Integrity Constants (distinct names avoid CASE duplicate symbols)
+const BOOT_FNV_OFFSET          = -3750763034362895579;
+const BOOT_FNV_PRIME           = 1099511628211;
+

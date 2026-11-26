@@ -67,6 +67,7 @@ const IDT_CODE_SEL   = 8;    // 0x08: CS selector
 const IDT_LIMIT      = 4095; // 256 entries * 16 - 1 = 4095 (0x0FFF)
 
 // PMM & Console Errors
+const ERR_BAD_BOOT_INFO    = 15;
 const ERR_PMM_NO_RAM       = 20;
 const ERR_PMM_OOM          = 21;
 const ERR_CONSOLE_OOM      = 40;
@@ -88,3 +89,18 @@ extern fn cpu_write_cr0_wp!();
 
 // Reverse Thunk 17: cpu_get_fn_addr (located at k_code_start - 544)
 extern fn cpu_get_fn_addr!();
+
+// Reverse Thunk 18: cpu_rdtsc (located at k_code_start - 576)
+extern fn cpu_rdtsc!();
+
+// Reverse Thunk 19: cpu_rdmsr (located at k_code_start - 608)
+extern fn cpu_rdmsr!();
+
+// Reverse Thunk 20: cpu_wrmsr (located at k_code_start - 640)
+extern fn cpu_wrmsr!();
+
+// Reverse Thunk 21: io_in32 (located at k_code_start - 672)
+extern fn io_in32!();
+
+// Reverse Thunk 22: cpu_wait_irq (located at k_code_start - 704: atomic sti; hlt; ret)
+extern fn cpu_wait_irq!();

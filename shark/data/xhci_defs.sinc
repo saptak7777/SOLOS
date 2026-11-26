@@ -1,0 +1,112 @@
+// ==========================================
+// shark/data/xhci_defs.sinc
+// Legacy-Free xHCI USB 2/3, Hub TT, HID Boot Kbd & PCI MSI-X Constants
+// ==========================================
+
+// xHCI Capability & Operational Offsets
+const XHCI_CAP_CAPLENGTH     = 0;
+const XHCI_CAP_HCSPARAMS1    = 4;
+const XHCI_CAP_HCSPARAMS2    = 8;
+const XHCI_CAP_HCCPARAMS1    = 16;
+const XHCI_CAP_DBOFF         = 20;
+const XHCI_CAP_RTSOFF        = 24;
+
+const XHCI_OP_USBCMD         = 0;
+const XHCI_OP_USBSTS         = 4;
+const XHCI_OP_CRCR_QW        = 3;   // +0x18
+const XHCI_OP_DCBAAP_QW      = 6;   // +0x30
+const XHCI_OP_CONFIG         = 56;  // +0x38
+const XHCI_OP_PORTSC_BASE    = 1024;// +0x400
+
+// USBCMD / USBSTS / PORTSC Bits
+const XHCI_CMD_RS            = 1;
+const XHCI_CMD_HCRST         = 2;
+const XHCI_CMD_INTE          = 4;
+const XHCI_STS_HCH           = 1;
+const XHCI_STS_CNR           = 2048;
+
+const XHCI_PORTSC_CCS        = 1;
+const XHCI_PORTSC_PR         = 16;
+const XHCI_PORTSC_PP         = 512;
+const XHCI_PORTSC_PRC        = 2097152;    // Bit 21
+const XHCI_PORTSC_W1C_MASK   = 16646146;   // Bit 1 (PED) | Bits 17..23 (RW1C changes)
+const XHCI_PORTSC_PRESERVE   = 4278321149; // ~XHCI_PORTSC_W1C_MASK
+
+// Interrupter 0 Runtime Offsets (relative to xhci_rt0 = rt_base + 32)
+const XHCI_IR_IMAN           = 0;
+const XHCI_IR_IMOD           = 4;
+const XHCI_IR_ERSTSZ         = 8;
+const XHCI_IR_ERSTBA_QW      = 2;   // +0x10
+const XHCI_IR_ERDP_QW        = 3;   // +0x18
+const XHCI_ERDP_EHB          = 8;
+
+// TRB Type Encodings (bits 15:10 -> << 10)
+const XHCI_TRB_NORMAL        = 1;
+const XHCI_TRB_SETUP         = 2;
+const XHCI_TRB_DATA          = 3;
+const XHCI_TRB_STATUS        = 4;
+const XHCI_TRB_LINK          = 6;
+const XHCI_TRB_ENABLE_SLOT   = 9;
+const XHCI_TRB_ADDRESS_DEV   = 11;
+const XHCI_TRB_CONFIG_EP     = 12;
+const XHCI_TRB_EVAL_CTX      = 13;
+const XHCI_TRB_EVT_TRANSFER  = 32;
+const XHCI_TRB_EVT_CMD       = 33;
+const XHCI_TRB_EVT_PSC       = 34;
+
+// USB Class / Descriptor Constants
+const USB_DESC_DEVICE        = 1;
+const USB_DESC_CONFIG        = 2;
+const USB_DESC_INTERFACE     = 4;
+const USB_DESC_ENDPOINT      = 5;
+const USB_CLASS_HID          = 3;
+const USB_SUBCLASS_BOOT      = 1;
+const USB_PROTO_KBD          = 1;
+const USB_CLASS_HUB          = 9;
+
+// PCIe Capability IDs (MSI-X / MSI / xECP)
+const PCI_CAP_ID_MSI         = 5;
+const PCI_CAP_ID_MSIX        = 17;
+const XHCI_ECAP_USBLEGSUP    = 1;
+
+// Controller State QWORDs (inside 4 KB PMM xhci page)
+const XHCI_ST_BAR            = 0;
+const XHCI_ST_OP_BASE        = 1;
+const XHCI_ST_RT0_BASE       = 2;
+const XHCI_ST_DB_BASE        = 3;
+const XHCI_ST_MAX_PORTS      = 4;
+const XHCI_ST_MAX_SLOTS      = 5;
+const XHCI_ST_CTX_SHIFT      = 6;
+const XHCI_ST_TSC_KHZ        = 7;
+const XHCI_ST_DCBAA          = 8;
+const XHCI_ST_CMD_RING       = 9;
+const XHCI_ST_CMD_IDX        = 10;
+const XHCI_ST_CMD_CCS        = 11;
+const XHCI_ST_EVT_RING       = 12;
+const XHCI_ST_EVT_IDX        = 13;
+const XHCI_ST_EVT_CCS        = 14;
+const XHCI_ST_EP0_BUF        = 15;
+const XHCI_ST_HID_COUNT      = 16;
+const XHCI_ST_BDF            = 17;
+const XHCI_ST_MSI_MODE       = 18;
+const XHCI_ST_RING_PTR       = 19;
+const XHCI_ST_SCRATCH_ARR    = 20;
+
+const XHCI_MAX_HID_DEVS      = 8;
+const XHCI_HID_BASE_QW       = 32;  // Byte +256: 8 slots x 64 B (8 QWORDs)
+const XHCI_ERST_OFFSET       = 1024;
+const XHCI_RPT_DMA_OFFSET    = 2048;
+
+// Per-HID Slot Lenses (8 QWORDs)
+const HID_DEV_KIND           = 0; // 0=free, 1=kbd
+const HID_DEV_SLOT           = 1;
+const HID_DEV_DCI            = 2;
+const HID_DEV_RING           = 3;
+const HID_DEV_RING_IDX       = 4;
+const HID_DEV_RING_CCS       = 5;
+const HID_DEV_PREV_STATE     = 6; // packed 6-key state
+const HID_DEV_RPT_BUF        = 7;
+
+// Shared Timer Wakeup Sequence Offset
+const TIMER_LENS_XHCI_SEQ    = 2; // bss_base + 0x6690
+

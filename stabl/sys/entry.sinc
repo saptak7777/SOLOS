@@ -1,14 +1,13 @@
 // ==========================================
 // stabl/sys/entry.sinc
 // Simple Typeless Artifact Boot Loader (STABL)
-// Hardware detection, UEFI severance, and kernel handoff
+// Zero-parser ESP asset loader, full PCI BAR discovery, UEFI severance & BootInfo handoff
 // ==========================================
 
 fn pci_read32!(bus, dev, fn_num, reg) [
     addr = 2147483648 | (bus << 16) | (dev << 11) | (fn_num << 8) | (reg & 252);
     io_out32!(PCI_CONFIG_ADDRESS, addr);
-    val = io_in32!(PCI_CONFIG_DATA);
-    ret val;
+    ret io_in32!(PCI_CONFIG_DATA);
 ]
 
 fn pci_write32!(bus, dev, fn_num, reg, val) [
@@ -18,109 +17,280 @@ fn pci_write32!(bus, dev, fn_num, reg, val) [
     ret 0;
 ]
 
+fn pci_enable_mmio_bar64!(bus, dev, fn_idx, reg) [
+    bar0 = pci_read32!(bus, dev, fn_idx, reg);
+    bar_lo = bar0 & BAR_MMIO_MASK;
+    bar_hi = 0;
+    if ((bar0 & 6) == 4) [
+        bar_hi = pci_read32!(bus, dev, fn_idx, reg + 4);
+    ]
+    bar_val = (bar_hi << 32) | bar_lo;
+    if (bar_val != 0) [
+        cmd = pci_read32!(bus, dev, fn_idx, 4);
+        pci_write32!(bus, dev, fn_idx, 4, cmd | PCI_CMD_MMIO_BM);
+    ]
+    ret bar_val;
+]
+
+fn stabl_fail!(code) [
+    io_out32!(TRG_DEBUG_PORT, code);
+    ret 1;
+]
+
+fn stabl_alloc_pages!(bs, pages, slot_out) [
+    alloc_fn = bs@[BOOT_SERVICES_ALLOCATE_PAGES];
+    slot_out@[0] = 0;
+    status = efi_call5!(alloc_fn, EFI_ALLOCATE_ANY_PAGES, EFI_LOADER_DATA, pages, slot_out, 0);
+    if (status != 0) [
+        ret 0;
+    ]
+    ret slot_out@[0];
+]
+
+fn stabl_open_esp_root!(bs, image_handle, slot_guid, slot_out) [
+    handle_proto_fn = bs@[BOOT_SERVICES_HANDLE_PROTOCOL];
+
+    slot_guid@[0] = GUID_LOADED_IMAGE_W0;
+    slot_guid@[1] = GUID_LOADED_IMAGE_W1;
+    slot_out@[0] = 0;
+    status = efi_call5!(handle_proto_fn, image_handle, slot_guid, slot_out, 0, 0);
+    if ((status != 0) | (slot_out@[0] == 0)) [
+        ret 0;
+    ]
+
+    loaded_img = slot_out@[0];
+    dev_handle = loaded_img@[LOADED_IMAGE_DEVICE_HANDLE];
+    if (dev_handle == 0) [
+        ret 0;
+    ]
+
+    slot_guid@[0] = GUID_SIMPLE_FS_W0;
+    slot_guid@[1] = GUID_SIMPLE_FS_W1;
+    slot_out@[0] = 0;
+    status = efi_call5!(handle_proto_fn, dev_handle, slot_guid, slot_out, 0, 0);
+    if ((status != 0) | (slot_out@[0] == 0)) [
+        ret 0;
+    ]
+
+    fs = slot_out@[0];
+    open_vol_fn = fs@[SIMPLE_FS_OPEN_VOLUME];
+    slot_out@[0] = 0;
+    status = efi_call5!(open_vol_fn, fs, slot_out, 0, 0, 0);
+    if (status != 0) [
+        ret 0;
+    ]
+    ret slot_out@[0];
+]
+
+fn stabl_load_esp_file!(bs, root, path_buf, slot_guid, slot_file_info, slot_out, slot_buf_sz) [
+    open_fn = root@[EFI_FILE_OPEN];
+    slot_out@[0] = 0;
+    status = efi_call5!(open_fn, root, slot_out, path_buf, EFI_FILE_MODE_READ, 0);
+    file = slot_out@[0];
+    if ((status != 0) | (file == 0)) [
+        io_out32!(TRG_DEBUG_PORT, ERR_ESP_OPEN_FAIL);
+        ret 0;
+    ]
+
+    get_info_fn = file@[EFI_FILE_GET_INFO];
+    close_fn = file@[EFI_FILE_CLOSE];
+    slot_guid@[0] = GUID_FILE_INFO_W0;
+    slot_guid@[1] = GUID_FILE_INFO_W1;
+    slot_buf_sz@[0] = 512;
+    status = efi_call5!(get_info_fn, file, slot_guid, slot_buf_sz, slot_file_info, 0);
+    file_size = slot_file_info@[FILE_INFO_LENS_FILE_SIZE];
+    if ((status != 0) | (file_size < 1)) [
+        efi_call5!(close_fn, file, 0, 0, 0, 0);
+        io_out32!(TRG_DEBUG_PORT, ERR_ESP_READ_FAIL);
+        ret 0;
+    ]
+
+    pages = (file_size + 4095) >> 12;
+    file_buf = stabl_alloc_pages!(bs, pages, slot_out);
+    if (file_buf == 0) [
+        efi_call5!(close_fn, file, 0, 0, 0, 0);
+        io_out32!(TRG_DEBUG_PORT, ERR_BOOT_ALLOC_FAIL);
+        ret 0;
+    ]
+
+    read_fn = file@[EFI_FILE_READ];
+    got = 0;
+    read_err = 0;
+    loop (chk:1024 = 0 .. 1024) [
+        if ((got < file_size) & (read_err == 0)) [
+            slot_buf_sz@[0] = file_size - got;
+            st_r = efi_call5!(read_fn, file, slot_buf_sz, file_buf + got, 0, 0);
+            chunk = slot_buf_sz@[0];
+            if ((st_r != 0) | (chunk == 0)) [
+                read_err = 1;
+            ] else [
+                got = got + chunk;
+            ]
+        ]
+    ]
+    efi_call5!(close_fn, file, 0, 0, 0, 0);
+
+    if ((read_err != 0) | (got != file_size)) [
+        io_out32!(TRG_DEBUG_PORT, ERR_ESP_READ_FAIL);
+        ret 0;
+    ]
+
+    slot_out@[1] = file_size;
+    ret file_buf;
+]
+
 fn stabl_main!(image_handle, system_table, image_base, bss_base) [
-    // 1. Telemetry and BSS pointer layout
     cpu_caps = 1; // AVX-512 guaranteed active by _efi_entry
 
+    // 1. Internal PE .bss Scratch Map (stays free of UEFI allocations & mem_map_buf)
     slot_map_size  = bss_base;
     slot_map_key   = bss_base + 8;
     slot_desc_size = bss_base + 16;
     slot_desc_ver  = bss_base + 24;
-    slot_gop_out   = bss_base + 32;
-    slot_guid      = bss_base + 40;
-    mem_map_buf    = bss_base + 64;
-    ram_tape       = bss_base + 49216;
-
-    // 2. Step B: Query Graphics Output Protocol (GOP)
-    slot_guid@[0] = GUID_GOP_W0;
-    slot_guid@[1] = GUID_GOP_W1;
-    slot_gop_out@[0] = 0;
+    slot_out       = bss_base + 32;   // [0]=out_ptr/handle, [1]=loaded_bytes
+    slot_buf_sz    = bss_base + 48;
+    slot_guid      = bss_base + 64;   // 16 B
+    slot_path_buf  = bss_base + 80;   // 64 B UTF-16LE path staging
+    slot_file_info = bss_base + 144;  // 512 B EFI_FILE_INFO staging
+    mem_map_buf    = bss_base + 1024; // 48 KB GetMemoryMap buffer
 
     bs = system_table@[SYSTEM_TABLE_BOOT_SERVICES];
+
+    // 2. Query GOP Framebuffer (BGRA8, Fail-Fast on PixelBltOnly)
+    slot_guid@[0] = GUID_GOP_W0;
+    slot_guid@[1] = GUID_GOP_W1;
+    slot_out@[0] = 0;
     locate_proto_fn = bs@[BOOT_SERVICES_LOCATE_PROTOCOL];
-    status = efi_call5!(locate_proto_fn, slot_guid, 0, slot_gop_out, 0, 0);
-    if (status != 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_GOP_NOT_FOUND);
-        ret 1;
+    status = efi_call5!(locate_proto_fn, slot_guid, 0, slot_out, 0, 0);
+    if ((status != 0) | (slot_out@[0] == 0)) [
+        ret stabl_fail!(ERR_GOP_NOT_FOUND);
     ]
 
-    gop = slot_gop_out@[0];
-    if (gop == 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_GOP_NOT_FOUND);
-        ret 1;
-    ]
-
+    gop = slot_out@[0];
     gop_mode = gop@[GOP_MODE];
     if (gop_mode == 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_GOP_NOT_FOUND);
-        ret 1;
+        ret stabl_fail!(ERR_GOP_NOT_FOUND);
     ]
-
     fb_base = gop_mode@[MODE_FB_BASE];
-    if (fb_base == 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_GOP_NOT_FOUND);
-        ret 1;
-    ]
-
     gop_info = gop_mode@[MODE_INFO];
-    if (gop_info == 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_GOP_NOT_FOUND);
-        ret 1;
+    if ((fb_base == 0) | (gop_info == 0)) [
+        ret stabl_fail!(ERR_GOP_NOT_FOUND);
     ]
 
     horiz_res = (gop_info@[0] >> 32) & 4294967295;
     vert_res = gop_info@[1] & 4294967295;
     pixel_format = (gop_info@[1] >> 32) & 4294967295;
-
-    // Fail-fast if PixelBltOnly (unsupported)
     if (pixel_format == 3) [
-        io_out32!(TRG_DEBUG_PORT, ERR_GOP_BLT_ONLY);
-        ret 1;
+        ret stabl_fail!(ERR_GOP_BLT_ONLY);
     ]
 
     pixels_per_scanline = gop_info@[INFO_STRIDE] & 4294967295;
     fb_stride = pixels_per_scanline << 2;
     dims = (horiz_res << 32) | vert_res;
 
-    // 3. Step C: PCI Probing for Mass Storage (NVMe / AHCI)
+    // 3. Zero-Parser ESP Asset Loading (\EFI\SOLOS\SHARK.BIN & \EFI\SOLOS\FONT.BIN)
+    root = stabl_open_esp_root!(bs, image_handle, slot_guid, slot_out);
+    if (root == 0) [
+        ret stabl_fail!(ERR_ESP_OPEN_FAIL);
+    ]
+
+    slot_path_buf@[0] = PATH_SHARK_BIN_W0;
+    slot_path_buf@[1] = PATH_SHARK_BIN_W1;
+    slot_path_buf@[2] = PATH_SHARK_BIN_W2;
+    slot_path_buf@[3] = PATH_SHARK_BIN_W3;
+    slot_path_buf@[4] = PATH_SHARK_BIN_W4;
+    slot_path_buf@[5] = PATH_SHARK_BIN_W5;
+    shark_addr = stabl_load_esp_file!(bs, root, slot_path_buf, slot_guid, slot_file_info, slot_out, slot_buf_sz);
+    shark_size = slot_out@[1];
+
+    slot_path_buf@[0] = PATH_FONT_BIN_W0;
+    slot_path_buf@[1] = PATH_FONT_BIN_W1;
+    slot_path_buf@[2] = PATH_FONT_BIN_W2;
+    slot_path_buf@[3] = PATH_FONT_BIN_W3;
+    slot_path_buf@[4] = PATH_FONT_BIN_W4;
+    slot_path_buf@[5] = 0;
+    font_addr = 0;
+    font_size = 0;
+    if (shark_addr != 0) [
+        font_addr = stabl_load_esp_file!(bs, root, slot_path_buf, slot_guid, slot_file_info, slot_out, slot_buf_sz);
+        font_size = slot_out@[1];
+    ]
+
+    root_close_fn = root@[EFI_FILE_CLOSE];
+    efi_call5!(root_close_fn, root, 0, 0, 0, 0);
+
+    if ((shark_addr == 0) | (font_addr == 0)) [
+        ret 1;
+    ]
+
+    if ((shark_size < SHARK_BIN_CODE_OFF) | (shark_addr@[SHARK_HDR_LENS_MAGIC] != SHARK_HDR_MAGIC_VER) | (shark_addr@[SHARK_HDR_LENS_TOTAL_SZ] != shark_size)) [
+        ret stabl_fail!(ERR_BAD_SHARK_BIN);
+    ]
+    entry_off = shark_addr@[SHARK_HDR_LENS_ENTRY];
+    if ((entry_off < SHARK_BIN_CODE_OFF) | (!(entry_off < shark_size))) [
+        ret stabl_fail!(ERR_BAD_SHARK_BIN);
+    ]
+    if (font_size != 4096) [
+        ret stabl_fail!(ERR_FONT_BAD_SIZE);
+    ]
+
+    shark_hash = boot_fnv1a_64(shark_addr, shark_size);
+    font_hash = boot_fnv1a_64(font_addr, font_size);
+
+    // 4. Allocate Kernel BSS/Stack (16 Pages = 64 KB) + BootInfo (1 Page) as EfiLoaderData
+    boot_info = stabl_alloc_pages!(bs, 1, slot_out);
+    kernel_bss = stabl_alloc_pages!(bs, 16, slot_out);
+    if ((boot_info == 0) | (kernel_bss == 0)) [
+        ret stabl_fail!(ERR_BOOT_ALLOC_FAIL);
+    ]
+    loop (zb:8192 = 0 .. 8192) [
+        kernel_bss@[zb] = 0;
+    ]
+    loop (zi:16 = 0 .. 16) [
+        boot_info@[zi] = 0;
+    ]
+
+    // 5. Full PCI Discovery: Primary Storage (NVMe/AHCI) + 64-Bit xHCI BAR0/BAR1
     storage_bar = 0;
+    xhci_bar = 0;
     loop (bus:256 = 0 .. 256) [
-        if (storage_bar == 0) [
+        if ((storage_bar == 0) | (xhci_bar == 0)) [
             loop (dev:32 = 0 .. 32) [
-                if (storage_bar == 0) [
+                if ((storage_bar == 0) | (xhci_bar == 0)) [
                     v0 = pci_read32!(bus, dev, 0, 0);
-                    vendor = v0 & 65535;
-                    if (vendor != 65535) [
+                    if ((v0 & 65535) != 65535) [
                         hdr = pci_read32!(bus, dev, 0, 12);
                         max_fn = 1;
                         if (((hdr >> 16) & 128) != 0) [
                             max_fn = 8;
                         ]
                         loop (fn_idx:8 = 0 .. max_fn) [
-                            if (storage_bar == 0) [
+                            if ((storage_bar == 0) | (xhci_bar == 0)) [
                                 v_fn = pci_read32!(bus, dev, fn_idx, 0);
                                 if ((v_fn & 65535) != 65535) [
                                     class_reg = pci_read32!(bus, dev, fn_idx, 8);
                                     class_code = (class_reg >> 8) & 16777215;
 
-                                    if (class_code == PCI_CLASS_NVME) [
-                                        bar0 = pci_read32!(bus, dev, fn_idx, 16);
-                                        bar_lo = bar0 & BAR_MMIO_MASK;
-                                        bar_hi = 0;
-                                        if ((bar0 & 6) == 4) [
-                                            bar_hi = pci_read32!(bus, dev, fn_idx, 20);
-                                        ]
-                                        storage_bar = (bar_hi << 32) | bar_lo;
-                                        cpu_caps = cpu_caps | 2;
-                                    ] else [
-                                        if (class_code == PCI_CLASS_AHCI) [
-                                            bar5 = pci_read32!(bus, dev, fn_idx, 36);
-                                            storage_bar = bar5 & BAR_MMIO_MASK;
+                                    if ((storage_bar == 0) & (class_code == PCI_CLASS_NVME)) [
+                                        storage_bar = pci_enable_mmio_bar64!(bus, dev, fn_idx, 16);
+                                        if (storage_bar != 0) [
+                                            cpu_caps = cpu_caps | 2;
                                         ]
                                     ]
-                                    if (storage_bar != 0) [
-                                        cmd = pci_read32!(bus, dev, fn_idx, 4);
-                                        pci_write32!(bus, dev, fn_idx, 4, cmd | PCI_CMD_MMIO_BM);
+                                    if ((storage_bar == 0) & (class_code == PCI_CLASS_AHCI)) [
+                                        bar5 = pci_read32!(bus, dev, fn_idx, 36);
+                                        storage_bar = bar5 & BAR_MMIO_MASK;
+                                        if (storage_bar != 0) [
+                                            cmd_a = pci_read32!(bus, dev, fn_idx, 4);
+                                            pci_write32!(bus, dev, fn_idx, 4, cmd_a | PCI_CMD_MMIO_BM);
+                                        ]
+                                    ]
+                                    if ((xhci_bar == 0) & (class_code == PCI_CLASS_XHCI)) [
+                                        xhci_bar = pci_enable_mmio_bar64!(bus, dev, fn_idx, 16);
+                                        if (xhci_bar != 0) [
+                                            bdf16 = (bus << 8) | (dev << 3) | fn_idx;
+                                            cpu_caps = cpu_caps | 4 | (bdf16 << 8);
+                                        ]
                                     ]
                                 ]
                             ]
@@ -132,33 +302,62 @@ fn stabl_main!(image_handle, system_table, image_base, bss_base) [
     ]
 
     if (storage_bar == 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_NO_STORAGE);
-        ret 1;
+        ret stabl_fail!(ERR_NO_STORAGE);
     ]
 
-    // 4. Step D: Single-Shot GetMemoryMap & ExitBootServices
+    // 5b. Calibrate Monotonic TSC via UEFI Stall(10000 us = 10 ms)
+    stall_fn = bs@[BOOT_SERVICES_STALL];
+    t0 = stabl_rdtsc!();
+    efi_call5!(stall_fn, 10000, 0, 0, 0, 0);
+    t1 = stabl_rdtsc!();
+    tsc_khz = 0;
+    if (t1 > t0) [
+        tsc_khz = (t1 - t0) / 10;
+    ]
+    if (tsc_khz < 10000) [
+        ret stabl_fail!(ERR_TSC_CAL_FAIL);
+    ]
+
+    // 6. Single-Shot GetMemoryMap & ExitBootServices (zero intervening BootServices calls)
     slot_map_size@[0] = 49152;
     get_mem_map_fn = bs@[BOOT_SERVICES_GET_MEMORY_MAP];
     status = efi_call5!(get_mem_map_fn, slot_map_size, mem_map_buf, slot_map_key, slot_desc_size, slot_desc_ver);
     if (status != 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_MEM_MAP_FAIL);
-        ret 1;
+        ret stabl_fail!(ERR_MEM_MAP_FAIL);
     ]
 
     map_key = slot_map_key@[0];
     exit_bs_fn = bs@[BOOT_SERVICES_EXIT_BOOT_SERVICES];
     status = efi_call5!(exit_bs_fn, image_handle, map_key, 0, 0, 0);
     if (status != 0) [
-        io_out32!(TRG_DEBUG_PORT, ERR_EXIT_BS_FAIL);
-        ret 1;
+        ret stabl_fail!(ERR_EXIT_BS_FAIL);
     ]
 
-    // 5. Step E: Compact RAM Tape and Jump to SINC Exokernel
+    // 7. Compact RAM Tape into Kernel BSS & Populate 128-Byte BootInfo
     map_size = slot_map_size@[0];
     desc_size = slot_desc_size@[0];
-    region_count = compact_ram_tape!(mem_map_buf, map_size, desc_size, ram_tape);
+    k_ram_tape = kernel_bss + 49216;
+    region_count = compact_ram_tape!(mem_map_buf, map_size, desc_size, k_ram_tape);
 
-    stride_caps = (fb_stride << 32) | cpu_caps;
-    stabl_jump_kernel!(fb_base, dims, stride_caps, ram_tape, region_count, storage_bar);
+    boot_info@[BOOT_LENS_MAGIC_VER]      = BOOT_INFO_MAGIC_VER;
+    boot_info@[BOOT_LENS_FB_BASE]        = fb_base;
+    boot_info@[BOOT_LENS_FB_DIMS]        = dims;
+    boot_info@[BOOT_LENS_FB_STRIDE_CAPS] = (fb_stride << 32) | cpu_caps;
+    boot_info@[BOOT_LENS_RAM_TAPE]       = k_ram_tape;
+    boot_info@[BOOT_LENS_REGION_COUNT]   = region_count;
+    boot_info@[BOOT_LENS_STORAGE_BAR]    = storage_bar;
+    boot_info@[BOOT_LENS_XHCI_BAR]       = xhci_bar;
+    boot_info@[BOOT_LENS_BSS_BASE]       = kernel_bss;
+    boot_info@[BOOT_LENS_SHARK_BASE]     = shark_addr;
+    boot_info@[BOOT_LENS_SHARK_SIZE]     = shark_size;
+    boot_info@[BOOT_LENS_SHARK_HASH]     = shark_hash;
+    boot_info@[BOOT_LENS_FONT_BASE]      = font_addr;
+    boot_info@[BOOT_LENS_FONT_SIZE]      = font_size;
+    boot_info@[BOOT_LENS_FONT_HASH]      = font_hash;
+    boot_info@[BOOT_LENS_TSC_KHZ]        = tsc_khz;
+
+    entry_addr = shark_addr + entry_off;
+    stack_top = kernel_bss + 65536;
+    stabl_jump_kernel!(boot_info, entry_addr, stack_top);
     ret 0;
 ]

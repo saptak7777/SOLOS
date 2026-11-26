@@ -16,6 +16,8 @@ const ARENA_LENS_CR3       = 8;
 const ARENA_LENS_LIT_TABLE = 9;
 const ARENA_LENS_META_BUF  = 10;
 const ARENA_LENS_EXOCALL   = 11;
+const ARENA_LENS_BOOT_INFO = 12;
+const ARENA_LENS_XHCI      = 13;
 
 // Kernel Exocall Opcodes
 const EXOCALL_GET_FN_ADDR   = 0;
@@ -26,8 +28,9 @@ const EXOCALL_SLOT_UNLOAD   = 4;
 const EXOCALL_PMM_ALLOC     = 5;
 const EXOCALL_PMM_FREE      = 6;
 const EXOCALL_NVME_RW       = 7;
-const EXOCALL_WAIT_TICKS    = 8;
+const EXOCALL_SLEEP_US      = 8;
 const EXOCALL_SLOT_LOAD_MEM = 9;
+const EXOCALL_INPUT_POLL    = 10;
 
 // PMM Control Block Lenses
 const PMM_LENS_BITMAP_BASE = 0;

@@ -14,6 +14,11 @@ const NVME_LENS_IO_SQ_TAIL   = 6; // QWORD 6: I/O SQ tail index (0..63)
 const NVME_LENS_IO_CQ_HEAD   = 7; // QWORD 7: I/O CQ head index (0..63)
 const NVME_LENS_IO_PHASE     = 8; // QWORD 8: Expected I/O CQ Phase Tag (1 or 0)
 const NVME_LENS_CID_COUNTER  = 9; // QWORD 9: Monotonic Command Identifier
+const NVME_LENS_TSC_KHZ      = 10; // QWORD 10: Calibrated TSC frequency (kHz)
+
+// Microsecond Hardware Deadlines (TSC-Calibrated)
+const NVME_TIMEOUT_CSTS_US   = 500000;  // 500 ms CSTS ready/reset budget
+const NVME_TIMEOUT_CQE_US    = 2000000; // 2000 ms CQ completion budget
 
 // 64-bit MMIO Registers (direct access via ptr@[off >> 3])
 const NVME_REG_CAP_QW       = 0;    // 0x00: CAP (QWORD index 0)

@@ -1,7 +1,7 @@
 // ==========================================
 // stabl/data/stabl_defs.sinc
 // Simple Typeless Artifact Boot Loader (STABL)
-// Hardware offsets, lenses, and reverse thunk declarations
+// UEFI protocols, PCI constants, and reverse thunk declarations
 // ==========================================
 
 // Reverse Thunk Table declarations (stride = -32 bytes from code_start 0x0400)
@@ -11,14 +11,33 @@ extern fn efi_call5!();
 extern fn io_in32!();
 // Thunk 3: 0x03A0 -> io_out32 inline
 extern fn io_out32!();
-// Thunk 4: 0x0380 -> stabl_jump_kernel bridge
+// Thunk 4: 0x0380 -> stabl_jump_kernel(boot_info, entry_addr, stack_top)
 extern fn stabl_jump_kernel!();
+// Thunk 5: 0x0360 -> stabl_rdtsc inline (lfence; rdtsc; shl 32; or; ret)
+extern fn stabl_rdtsc!();
 
-// UEFI System Table and Boot Services QWORD offsets
+// UEFI System Table & Boot Services QWORD offsets
 const SYSTEM_TABLE_BOOT_SERVICES       = 12; // 0x60
+const BOOT_SERVICES_ALLOCATE_PAGES     = 5;  // 0x28
 const BOOT_SERVICES_GET_MEMORY_MAP     = 7;  // 0x38
+const BOOT_SERVICES_HANDLE_PROTOCOL    = 19; // 0x98
 const BOOT_SERVICES_EXIT_BOOT_SERVICES = 29; // 0xE8
+const BOOT_SERVICES_STALL              = 31; // 0xF8
 const BOOT_SERVICES_LOCATE_PROTOCOL    = 40; // 0x140
+
+// UEFI AllocatePages parameters
+const EFI_ALLOCATE_ANY_PAGES = 0;
+const EFI_LOADER_DATA        = 2;
+
+// UEFI LoadedImage / SimpleFileSystem / File Protocol QWORD offsets
+const LOADED_IMAGE_DEVICE_HANDLE = 3; // +0x18: EFI_HANDLE DeviceHandle
+const SIMPLE_FS_OPEN_VOLUME      = 1; // +0x08: OpenVolume(This, **Root)
+const EFI_FILE_OPEN              = 1; // +0x08: Open(This, **NewHandle, *Name, Mode, Attr)
+const EFI_FILE_CLOSE             = 2; // +0x10: Close(This)
+const EFI_FILE_READ              = 4; // +0x20: Read(This, *BufSize, *Buf)
+const EFI_FILE_GET_INFO          = 8; // +0x40: GetInfo(This, *Type, *BufSize, *Buf)
+const EFI_FILE_MODE_READ         = 1;
+const FILE_INFO_LENS_FILE_SIZE   = 1; // +0x08: UINT64 FileSize
 
 // GOP Protocol lenses
 const GOP_MODE          = 3; // 0x18
@@ -26,18 +45,45 @@ const MODE_INFO         = 1; // 0x08
 const MODE_FB_BASE      = 3; // 0x18
 const INFO_STRIDE       = 4; // 0x20: PixelsPerScanLine
 
-// GOP GUID Little-Endian QWORDs
-// 9042a9de-23dc-4a38-96fb-7aded080516a
-const GUID_GOP_W0 = 5348063987722529246; // 0x4a3823dc9042a9de
-const GUID_GOP_W1 = 7661046075708078998; // 0x6a5180d0de7afb96
+// UEFI GUID Little-Endian QWORDs
+// GOP: 9042a9de-23dc-4a38-96fb-7aded080516a
+const GUID_GOP_W0          = 5348063987722529246;
+const GUID_GOP_W1          = 7661046075708078998;
+// LoadedImage: 5b1b31a1-9562-11d2-8e3f-00a0c969723b
+const GUID_LOADED_IMAGE_W0 = 1284253093421855137;
+const GUID_LOADED_IMAGE_W1 = 4283602510276476814;
+// SimpleFileSystem: 964e5b22-6459-11d2-8e39-00a0c969723b
+const GUID_SIMPLE_FS_W0    = 1284199179690597154;
+const GUID_SIMPLE_FS_W1    = 4283602510276475278;
+// FileInfo: 09576e92-6d3f-11d2-8e39-00a0c969723b
+const GUID_FILE_INFO_W0    = 1284208961261104786;
+const GUID_FILE_INFO_W1    = 4283602510276475278;
+
+// Fixed UTF-16LE ESP Paths (Strict Law 15, NUL-terminated QWORDs)
+// \EFI\SOLOS\SHARK.BIN
+const PATH_SHARK_BIN_W0 = 20547973952110684;
+const PATH_SHARK_BIN_W1 = 21392437537865820;
+const PATH_SHARK_BIN_W2 = 23362818209415247;
+const PATH_SHARK_BIN_W3 = 21110975444877384;
+const PATH_SHARK_BIN_W4 = 21955361720369198;
+const PATH_SHARK_BIN_W5 = 0;
+
+// \EFI\SOLOS\FONT.BIN
+const PATH_FONT_BIN_W0  = 20547973952110684;
+const PATH_FONT_BIN_W1  = 21392437537865820;
+const PATH_FONT_BIN_W2  = 19703643512176719;
+const PATH_FONT_BIN_W3  = 12948209711054927;
+const PATH_FONT_BIN_W4  = 335012233282;
+const PATH_FONT_BIN_W5  = 0;
 
 // PCI Configuration Mechanism #1 Ports & Offsets
 const PCI_CONFIG_ADDRESS = 3320; // 0xCF8
 const PCI_CONFIG_DATA    = 3324; // 0xCFC
 
 // PCI Class Codes (Class << 16 | Subclass << 8 | ProgIF)
-const PCI_CLASS_NVME = 67586; // 0x010802: Mass Storage / NVM / NVMe
-const PCI_CLASS_AHCI = 67073; // 0x010601: Mass Storage / SATA / AHCI
+const PCI_CLASS_NVME = 67586;  // 0x010802: Mass Storage / NVM / NVMe
+const PCI_CLASS_AHCI = 67073;  // 0x010601: Mass Storage / SATA / AHCI
+const PCI_CLASS_XHCI = 787248; // 0x0C0330: Serial Bus / USB / xHCI
 
 // PCI Command & BAR Masks
 const PCI_CMD_MMIO_BM = 6;          // Bit 1: Memory Space, Bit 2: Bus Master
@@ -48,7 +94,12 @@ const TRG_DEBUG_PORT    = 244; // 0xF4
 const ERR_NO_AVX512     = 5;
 const ERR_GOP_NOT_FOUND = 10;
 const ERR_GOP_BLT_ONLY  = 11;
+const ERR_ESP_OPEN_FAIL = 12;
+const ERR_ESP_READ_FAIL = 13;
+const ERR_BAD_SHARK_BIN = 14;
+const ERR_FONT_BAD_SIZE = 15;
+const ERR_BOOT_ALLOC_FAIL = 16;
+const ERR_TSC_CAL_FAIL  = 17;
 const ERR_NO_STORAGE    = 20;
 const ERR_MEM_MAP_FAIL  = 30;
 const ERR_EXIT_BS_FAIL  = 31;
-

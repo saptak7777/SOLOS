@@ -33,8 +33,8 @@ fn pmm_init!(ram_tape, ram_count) [
     bitmap_bytes = num_words << 3;
     bitmap_pages = (bitmap_bytes + 4095) >> 12;
 
-    // Image boundaries: PE image start to end of BSS stack
-    img_start = bss_base - 32768;
+    // Reserve kernel BSS + stack explicitly (loaded ESP assets are excluded via EfiLoaderData)
+    img_start = bss_base;
     img_end = bss_base + 65536;
     img_start_p = img_start >> 12;
     img_end_p = (img_end + 4095) >> 12;

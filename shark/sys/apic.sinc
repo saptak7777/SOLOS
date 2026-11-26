@@ -1,0 +1,77 @@
+// ==========================================
+// shark/sys/apic.sinc
+// Legacy-Free x2APIC Interrupt Controller & Tickless TSC-Deadline Timer
+// ==========================================
+
+fn apic_init!(ram_tape, tsc_khz) [
+    // Mask legacy 8259 PIC once permanently so no legacy IRQs ever fire
+    io_out8!(33, 255);
+    io_out8!(161, 255);
+
+    // Enable x2APIC mode safely via IA32_APIC_BASE (enable xAPIC first if disabled, then EXTD)
+    apic_base = cpu_rdmsr!(MSR_IA32_APIC_BASE);
+    if ((apic_base & APIC_BASE_EN) == 0) [
+        cpu_wrmsr!(MSR_IA32_APIC_BASE, apic_base | APIC_BASE_EN);
+        apic_base = cpu_rdmsr!(MSR_IA32_APIC_BASE);
+    ]
+    cpu_wrmsr!(MSR_IA32_APIC_BASE, apic_base | APIC_BASE_EN | APIC_BASE_X2APIC);
+
+    cpu_wrmsr!(MSR_X2APIC_ESR, 0);
+    cpu_wrmsr!(MSR_X2APIC_SVR, 511); // Software enable (bit 8) | spurious vector 255
+    cpu_wrmsr!(MSR_X2APIC_LVT_LINT0, APIC_LVT_MASKED);
+    cpu_wrmsr!(MSR_X2APIC_LVT_LINT1, APIC_LVT_MASKED);
+    cpu_wrmsr!(MSR_X2APIC_LVT_TIMER, APIC_LVT_TSC_DEADLINE | APIC_VECTOR_TIMER);
+    cpu_wrmsr!(MSR_IA32_TSC_DEADLINE, 0);
+
+    bss_base = ram_tape - 49216;
+    timer_ptr = bss_base + TIMER_BSS_OFFSET;
+    timer_ptr@[TIMER_LENS_TICKS] = 0;
+    timer_ptr@[TIMER_LENS_TSC_KHZ] = tsc_khz;
+    ret 0;
+]
+
+fn apic_bsp_id!() [
+    ret cpu_rdmsr!(MSR_X2APIC_ID);
+]
+
+fn tsc_calc_deadline!(us, tsc_khz) [
+    delta = (us * tsc_khz) / 1000;
+    if (delta < 1) [
+        delta = 1;
+    ]
+    ret cpu_rdtsc!() + delta;
+]
+
+fn tsc_sleep_us!(timer_ptr, us, wake_on_input, xhci) [
+    if (us < 1) [
+        ret 1;
+    ]
+    if ((wake_on_input != 0) & (xhci != 0)) [
+        if (xhci_poll!(xhci) != 0) [
+            ret 1;
+        ]
+    ]
+    tsc_khz = timer_ptr@[TIMER_LENS_TSC_KHZ];
+    timer_ptr@[TIMER_LENS_TICKS] = 0;
+    seq0 = timer_ptr@[TIMER_LENS_XHCI_SEQ];
+    deadline = tsc_calc_deadline!(us, tsc_khz);
+    cpu_wrmsr!(MSR_IA32_TSC_DEADLINE, deadline);
+
+    done = 0;
+    loop (w:1024 = 0 .. 1024) [
+        if (done == 0) [
+            cpu_wait_irq!();
+            cpu_set_interrupts!(0);
+            if ((wake_on_input != 0) & (timer_ptr@[TIMER_LENS_XHCI_SEQ] != seq0)) [
+                xhci_poll!(xhci);
+                done = 1;
+            ]
+            if ((timer_ptr@[TIMER_LENS_TICKS] != 0) | (!(cpu_rdtsc!() < deadline))) [
+                done = 1;
+            ]
+        ]
+    ]
+    cpu_wrmsr!(MSR_IA32_TSC_DEADLINE, 0);
+    ret done;
+]
+

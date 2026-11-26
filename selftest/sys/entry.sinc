@@ -95,20 +95,37 @@ fn test_nvme_case!(arena) [
 
 fn test_ring!(arena) [
     ring_ptr = arena@[ARENA_LENS_RING];
-    r_push = ring_push!(ring_ptr, 30);
+    // Verify negative packed fields stay >= 0 cleanly (pad==0 protects < 0 sentinel)
+    k_ev = input_evt_pack(EVT_KEY_DOWN, MOD_LSHIFT, TRG_RET, -35, -1);
+    if ((k_ev < 0) | (input_evt_type(k_ev) != EVT_KEY_DOWN) | (input_evt_mods(k_ev) != MOD_LSHIFT) | (input_evt_key(k_ev) != TRG_RET) | (input_evt_aux(k_ev) != -1)) [
+        ret 7;
+    ]
+    r_push = ring_push!(ring_ptr, k_ev);
     pop_val = ring_pop!(ring_ptr);
+    empty_val = ring_pop!(ring_ptr);
     head = ring_ptr@[RING_LENS_HEAD];
     tail = ring_ptr@[RING_LENS_TAIL];
-    if ((r_push != 0) | (pop_val != 30) | (head != tail)) [
+    if ((r_push != 0) | (pop_val != k_ev) | (!(empty_val < 0)) | (head != tail)) [
         ret 7;
     ]
     ret 0;
 ]
 
-fn test_scancodes!() [
-    dec_err = (trg_is_break_code(30) != 0) | (trg_is_break_code(158) != 1) | (trg_update_shift_state(42, 0) != 1) | (trg_update_shift_state(170, 1) != 0);
-    trg_err = (trg_scancode_to_trg(30, 0) != 26) | (trg_scancode_to_trg(30, 1) != 0) | (trg_scancode_to_trg(28, 0) != 241) | (trg_scancode_to_trg(57, 0) != 240) | (trg_scancode_to_trg(14, 0) != TRG_BS) | (trg_scancode_to_trg(158, 0) != -1) | (trg_scancode_to_trg(42, 0) != -1);
-    if ((dec_err | trg_err) != 0) [
+fn test_xhci_hid!(arena) [
+    // Direct HID Usage -> Pure TRG mapping check (a, A, Enter, Space, BS, ArrowUp, unmapped)
+    trg_err = (hid_usage_to_trg(4, 0) != 26) | (hid_usage_to_trg(4, MOD_LSHIFT) != 0) | (hid_usage_to_trg(40, 0) != TRG_RET) | (hid_usage_to_trg(44, 0) != TRG_SPC) | (hid_usage_to_trg(42, 0) != TRG_BS) | (hid_usage_to_trg(82, 0) != TRG_ARROW_UP) | (hid_usage_to_trg(0, 0) != -1);
+    if (trg_err != 0) [
+        ret 8;
+    ]
+    xhci = arena@[ARENA_LENS_XHCI];
+    if (xhci == 0) [
+        ret 8;
+    ]
+    if ((xhci@[XHCI_ST_HID_COUNT] < 1) | (xhci@[XHCI_ST_MSI_MODE] == 0)) [
+        ret 8;
+    ]
+    p_cnt = exocall!(arena, EXOCALL_INPUT_POLL, 0, 0, 0, 0);
+    if (p_cnt < 0) [
         ret 8;
     ]
     ret 0;
@@ -561,9 +578,43 @@ fn battle_cell_abort_unwind!(arena) [
     ret 0;
 ]
 
+fn test_bootinfo!(arena) [
+    bi = arena@[ARENA_LENS_BOOT_INFO];
+    if (bi == 0) [
+        ret 20;
+    ]
+    if (bi@[BOOT_LENS_MAGIC_VER] != BOOT_INFO_MAGIC_VER) [
+        ret 20;
+    ]
+    if ((bi@[BOOT_LENS_FB_BASE] == 0) | (bi@[BOOT_LENS_RAM_TAPE] == 0) | (bi@[BOOT_LENS_REGION_COUNT] < 1) | (bi@[BOOT_LENS_STORAGE_BAR] == 0)) [
+        ret 20;
+    ]
+    if (bi@[BOOT_LENS_XHCI_BAR] == 0) [
+        ret 20;
+    ]
+    if (bi@[BOOT_LENS_TSC_KHZ] < 10000) [
+        ret 20;
+    ]
+    s_sz = bi@[BOOT_LENS_SHARK_SIZE];
+    f_base = bi@[BOOT_LENS_FONT_BASE];
+    f_sz = bi@[BOOT_LENS_FONT_SIZE];
+    f_hash = bi@[BOOT_LENS_FONT_HASH];
+    if ((bi@[BOOT_LENS_SHARK_BASE] == 0) | (!(s_sz > SHARK_BIN_CODE_OFF)) | (f_base == 0) | (f_sz != 4096)) [
+        ret 20;
+    ]
+    if (case_fnv1a_64(f_base, f_sz) != f_hash) [
+        ret 20;
+    ]
+    ret 0;
+]
+
 fn main!(arena) [
     if (arena == 0) [
         ret 11;
+    ]
+
+    if (test_bootinfo!(arena) != 0) [
+        ret 20;
     ]
 
     if (test_pmm!(arena) != 0) [
@@ -578,15 +629,16 @@ fn main!(arena) [
     if (test_ring!(arena) != 0) [
         ret 7;
     ]
-    if (test_scancodes!() != 0) [
+    if (test_xhci_hid!(arena) != 0) [
         ret 8;
     ]
     if (test_console!(arena) != 0) [
         ret 9;
     ]
 
-    t_res = exocall!(arena, EXOCALL_WAIT_TICKS, 5, 0, 0, 0);
-    if (t_res == 0) [
+    t_res = exocall!(arena, EXOCALL_SLEEP_US, 5000, 0, 0, 0);
+    timer_ptr = arena@[ARENA_LENS_TIMER];
+    if ((t_res == 0) | (timer_ptr@[0] < 1)) [
         ret 10;
     ]
 

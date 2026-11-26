@@ -1,0 +1,28 @@
+// ==========================================
+// spine/pure/input_evt.sinc
+// Pure 64-Bit InputEvent Pack & Unpack Helpers (Strict Law 15)
+// ==========================================
+
+fn input_evt_pack(ty, mods, key, arg_b, aux) [
+    ret ((ty & 255) << 48) | ((mods & 255) << 40) | ((key & 65535) << 24) | ((arg_b & 65535) << 8) | (aux & 255);
+]
+
+fn input_evt_type(ev) [
+    ret (ev >> 48) & 255;
+]
+
+fn input_evt_mods(ev) [
+    ret (ev >> 40) & 255;
+]
+
+fn input_evt_key(ev) [
+    ret (ev >> 24) & 65535;
+]
+
+fn input_evt_aux(ev) [
+    v = ev & 255;
+    if (!(v < 128)) [
+        ret v - 256;
+    ]
+    ret v;
+]

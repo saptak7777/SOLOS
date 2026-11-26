@@ -12,17 +12,24 @@ fn nvme_ring_doorbell!(nvme, qid, is_cq, val) [
     ret 0;
 ]
 
-fn nvme_wait_csts!(bar, target_bit) [
-    loop (p:2000000 = 0 .. 2000000) [
+fn nvme_wait_csts!(bar, target_bit, tsc_khz) [
+    deadline = tsc_calc_deadline!(NVME_TIMEOUT_CSTS_US, tsc_khz);
+    loop (p:1000000000 = 0 .. 1000000000) [
         if ((mmio_read32!(bar + NVME_OFF_CSTS) & 1) == target_bit) [
             ret 0;
+        ]
+        if ((p & 63) == 63) [
+            if (!(cpu_rdtsc!() < deadline)) [
+                ret 1;
+            ]
         ]
     ]
     ret 1;
 ]
 
-fn nvme_wait_cqe!(cq, dw3_idx, exp_phase) [
-    loop (p:50000000 = 0 .. 50000000) [
+fn nvme_wait_cqe!(cq, dw3_idx, exp_phase, tsc_khz) [
+    deadline = tsc_calc_deadline!(NVME_TIMEOUT_CQE_US, tsc_khz);
+    loop (p:1000000000 = 0 .. 1000000000) [
         dw3 = cq@[dw3_idx];
         if (((dw3 >> 48) & 1) == exp_phase) [
             if (((dw3 >> 49) & 32767) != 0) [
@@ -30,11 +37,16 @@ fn nvme_wait_cqe!(cq, dw3_idx, exp_phase) [
             ]
             ret 0;
         ]
+        if ((p & 63) == 63) [
+            if (!(cpu_rdtsc!() < deadline)) [
+                ret 1;
+            ]
+        ]
     ]
     ret 1;
 ]
 
-fn nvme_init!(storage_bar, pmm) [
+fn nvme_init!(storage_bar, pmm, tsc_khz) [
     if (storage_bar == 0) [
         ret 0;
     ]
@@ -46,12 +58,13 @@ fn nvme_init!(storage_bar, pmm) [
     dstrd = (cap >> 32) & 15;
     nvme@[NVME_LENS_BAR] = storage_bar;
     nvme@[NVME_LENS_DSTRD_SHIFT] = 2 + dstrd;
+    nvme@[NVME_LENS_TSC_KHZ] = tsc_khz;
 
     // 1. Disable controller if enabled by UEFI/OVMF
     csts = mmio_read32!(storage_bar + NVME_OFF_CSTS);
     if ((csts & 1) != 0) [
         mmio_write32!(storage_bar + NVME_OFF_CC, 0);
-        if (nvme_wait_csts!(storage_bar, 0) != 0) [
+        if (nvme_wait_csts!(storage_bar, 0, tsc_khz) != 0) [
             io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
             ret 0;
         ]
@@ -86,7 +99,7 @@ fn nvme_init!(storage_bar, pmm) [
     mmio_write32!(storage_bar + NVME_OFF_CC, cc_val);
 
     // 6. Poll CSTS.RDY == 1
-    if (nvme_wait_csts!(storage_bar, 1) != 0) [
+    if (nvme_wait_csts!(storage_bar, 1, tsc_khz) != 0) [
         io_out32!(TRG_DEBUG_PORT, ERR_NVME_TIMEOUT);
         ret 0;
     ]
@@ -129,7 +142,7 @@ fn nvme_create_io_queues!(nvme, pmm) [
 
     nvme_ring_doorbell!(nvme, 0, 0, 1);
 
-    r_cq = nvme_wait_cqe!(acq, 1, 1);
+    r_cq = nvme_wait_cqe!(acq, 1, 1, nvme@[NVME_LENS_TSC_KHZ]);
     if (r_cq == 2) [
         io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
         ret 1;
@@ -155,7 +168,7 @@ fn nvme_create_io_queues!(nvme, pmm) [
 
     nvme_ring_doorbell!(nvme, 0, 0, 2);
 
-    r_sq = nvme_wait_cqe!(acq, 3, 1);
+    r_sq = nvme_wait_cqe!(acq, 3, 1, nvme@[NVME_LENS_TSC_KHZ]);
     if (r_sq == 2) [
         io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
         ret 1;
@@ -203,7 +216,7 @@ fn nvme_rw_sectors!(nvme, is_write, lba, count, buf) [
     exp_phase = nvme@[NVME_LENS_IO_PHASE];
     cqe_off = (head << 1) + 1;
 
-    r_io = nvme_wait_cqe!(iocq, cqe_off, exp_phase);
+    r_io = nvme_wait_cqe!(iocq, cqe_off, exp_phase, nvme@[NVME_LENS_TSC_KHZ]);
     if (r_io == 2) [
         io_out32!(TRG_DEBUG_PORT, ERR_NVME_CMD_FAIL);
         ret 4;
