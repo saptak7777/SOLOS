@@ -68,5 +68,10 @@ const FILE_BUILD_SAFE_0      = 1886160645580271131; // "build.sa"
 const FILE_BUILD_SAFE_1      = 7711;                // "fe"
 const FILE_PKG_SAFE_0        = 2170482325943493673; // "pkg.safe"
 const FILE_PKG_DB_0          = 29815614743593;      // "pkg.db"
+const FILE_SAGR_SAFE_0       = 2241153230432115244; // "sagr.saf"
+const FILE_SAGR_SAFE_1       = 30;                  // "e"
+const FILE_SYSMON_SAFE_0     = 3241790360169230892; // "sysmon.s"
+const FILE_SYSMON_SAFE_1     = 1974042;             // "afe"
+const FILE_GUI_LIVE_0        = 2174994691599248928; // "gui.live"
 const CASE_SAFE_EXT_PACKED   = 129370828029;        // ".safe" (5 TRG bytes)
 

@@ -1,0 +1,33 @@
+// ==========================================
+// sagr/build.staff
+// Sovereign SAGR Linear-Streaming Niri Compositor Cell Manifest
+// ==========================================
+
+artifact sagr [
+    target = x86_64_none;
+    type   = bin;
+]
+
+deps [
+    spine/data/boot_defs.sinc;
+    spine/data/abi_defs.sinc;
+    spine/data/input_defs.sinc;
+    spine/pure/input_evt.sinc;
+    spine/data/display_defs.sinc;
+    spine/pure/display_cmd.sinc;
+    lit/data/lit_defs.sinc;
+    lit/pure/slots.sinc;
+    case/data/case_defs.sinc;
+    case/pure/case.sinc;
+    case/pure/case_alloc.sinc;
+    case/sys/case_read.sinc;
+    shark/data/ring_defs.sinc;
+    shark/pure/math.sinc;
+    shark/sys/ring.sinc;
+]
+
+flags [
+    optimize = 3;
+    heap     = 1000000000;
+]
+

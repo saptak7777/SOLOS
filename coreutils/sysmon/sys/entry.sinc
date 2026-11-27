@@ -1,0 +1,148 @@
+// ==========================================
+// coreutils/sysmon/sys/entry.sinc
+// Resident SAGR System Monitor Pane Cell (PANE_OP_*, Strict Law 15)
+// ==========================================
+
+fn sysmon_emit_line!(disp_ctrl, st, col_fg, buf, len) [
+    row_idx = st@[SYSMON_ST_ROW_IDX];
+    if ((row_idx < 28) & (len > 0)) [
+        rect = st@[SYSMON_ST_CLIP_RECT];
+        cx   = sagr_sext16(sagr_cmd_x(rect));
+        cy   = st@[SYSMON_ST_CLIP_CY];
+        sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, SAGR_FLAG_CLIP, cx + 10, cy + 8 + (row_idx << 4)), sagr_pack_ext(len, 1, col_fg), buf, rect);
+        st@[SYSMON_ST_ROW_IDX] = row_idx + 1;
+    ]
+    ret 0;
+]
+
+fn sysmon_count_case!(arena) [
+    nvme = arena@[ARENA_LENS_NVME];
+    if (nvme == 0) [ ret 0; ]
+    tbl = exocall!(arena, EXOCALL_PMM_ALLOC, CASE_TABLE_PAGES, 0, 0, 0);
+    if (tbl == 0) [ ret 0; ]
+    cnt = 0;
+    if (case_rw_pages!(arena, 0, CASE_TABLE_START_PG, CASE_TABLE_PAGES, tbl) == 0) [
+        loop (e:128 = 0 .. CASE_MAX_ENTRIES) [
+            idx = (e << 3) + CASE_LENS_META;
+            if (case_entry_type(tbl@[idx]) != CASE_TYPE_FREE) [
+                cnt = cnt + 1;
+            ]
+        ]
+    ]
+    exocall!(arena, EXOCALL_PMM_FREE, tbl, CASE_TABLE_PAGES, 0, 0);
+    ret cnt;
+]
+
+fn sysmon_init!(arena, pkt) [
+    st = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if (st == 0) [ ret 0; ]
+    loop (z:512 = 0 .. 512) [ st@[z] = 0; ]
+    st@[SYSMON_ST_CASE_CNT] = sysmon_count_case!(arena);
+    pkt@[PANE_PKT_TITLE] = STR_SYSMON_TITLE;
+    ret st;
+]
+
+fn sysmon_render!(arena, st, pkt) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    rect      = pkt@[PANE_PKT_ARG0];
+    cx        = sagr_sext16(sagr_cmd_x(rect));
+    cy        = sagr_sext16(sagr_cmd_y(rect));
+    cw        = sagr_cmd_w(rect);
+    ch        = sagr_cmd_h(rect);
+    pkt@[PANE_PKT_TITLE] = STR_SYSMON_TITLE;
+
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_CLIP, cx, cy), sagr_pack_ext(cw, ch, SYSMON_COL_BG), 0, rect);
+    st@[SYSMON_ST_ROW_IDX]   = 0;
+    st@[SYSMON_ST_CLIP_RECT] = rect;
+    st@[SYSMON_ST_CLIP_CY]   = cy;
+    max_rows = (ch - 12) >> 4;
+    if (max_rows < 1) [ ret 0; ]
+
+    // Row 0: Header
+    r0 = st + SYSMON_ST_ROWS_OFF;
+    l0 = sagr_buf_push_qw!(r0, 0, 112, STR_HDR_0, 8);
+    l0 = sagr_buf_push_qw!(r0, l0, 112, STR_HDR_1, 6);
+    sysmon_emit_line!(disp_ctrl, st, SYSMON_COL_CYAN, r0, l0);
+
+    // Row 1: PMM free / max
+    pmm = arena@[ARENA_LENS_PMM];
+    free_pg = 0; max_pg = 0;
+    if (pmm != 0) [
+        free_pg = pmm@[PMM_LENS_FREE_PAGES];
+        max_pg  = pmm@[PMM_LENS_MAX_PAGE];
+    ]
+    r1 = st + SYSMON_ST_ROWS_OFF + 128;
+    l1 = sagr_buf_push_qw!(r1, 0, 112, STR_PMM_PG_0, 8);
+    l1 = sagr_buf_push_dec!(r1, l1, 112, free_pg);
+    l1 = sagr_buf_push_qw!(r1, l1, 112, STR_SLASH_0, 3);
+    l1 = sagr_buf_push_dec!(r1, l1, 112, max_pg);
+    sysmon_emit_line!(disp_ctrl, st, SYSMON_COL_GREEN, r1, l1);
+
+    // Row 2: Free MB + CASE entries
+    r2 = st + SYSMON_ST_ROWS_OFF + 256;
+    l2 = sagr_buf_push_dec!(r2, 0, 112, free_pg >> 8);
+    if (l2 < 112) [ r2@[l2 * 1] = 240; l2 = l2 + 1; ]
+    l2 = sagr_buf_push_qw!(r2, l2, 112, STR_MB_FREE_0, 8);
+    l2 = sagr_buf_push_qw!(r2, l2, 112, STR_CASE_CNT_0, 8);
+    if (l2 < 112) [ r2@[l2 * 1] = 240; l2 = l2 + 1; ]
+    l2 = sagr_buf_push_dec!(r2, l2, 112, st@[SYSMON_ST_CASE_CNT]);
+    sysmon_emit_line!(disp_ctrl, st, SYSMON_COL_GOLD, r2, l2);
+
+    // Row 3: Display resolution + Frame Seq
+    r3 = st + SYSMON_ST_ROWS_OFF + 384;
+    l3 = sagr_buf_push_qw!(r3, 0, 112, STR_DISP_0, 8);
+    l3 = sagr_buf_push_dec!(r3, l3, 112, disp_ctrl@[DISP_LENS_WIDTH]);
+    if (l3 < 112) [ r3@[l3 * 1] = 49; l3 = l3 + 1; ] // 'x'
+    l3 = sagr_buf_push_dec!(r3, l3, 112, disp_ctrl@[DISP_LENS_HEIGHT]);
+    l3 = sagr_buf_push_qw!(r3, l3, 112, STR_SEQ_0, 5);
+    l3 = sagr_buf_push_dec!(r3, l3, 112, disp_ctrl@[DISP_LENS_FRAME_SEQ]);
+    sysmon_emit_line!(disp_ctrl, st, SYSMON_COL_WHITE, r3, l3);
+
+    // Row 4: xHCI USB HID & active LIT slots count
+    xhci = arena@[ARENA_LENS_XHCI];
+    hid_cnt = 0;
+    if (xhci != 0) [ hid_cnt = xhci@[XHCI_ST_HID_COUNT]; ]
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    act_slots = 0;
+    loop (s:64 = 0 .. 64) [
+        if (slot_is_occupied(table, s) != 0) [ act_slots = act_slots + 1; ]
+    ]
+    r4 = st + SYSMON_ST_ROWS_OFF + 512;
+    l4 = sagr_buf_push_qw!(r4, 0, 112, STR_HID_0, 8);
+    l4 = sagr_buf_push_dec!(r4, l4, 112, hid_cnt);
+    if (l4 < 112) [ r4@[l4 * 1] = 240; l4 = l4 + 1; ]
+    l4 = sagr_buf_push_qw!(r4, l4, 112, STR_LIT_ACT_0, 8);
+    l4 = sagr_buf_push_dec!(r4, l4, 112, act_slots);
+    sysmon_emit_line!(disp_ctrl, st, SYSMON_COL_WHITE, r4, l4);
+
+    // Rows 5..: Resident LIT slots summary (up to max_rows)
+    loop (s:64 = 0 .. 64) [
+        cur_r = st@[SYSMON_ST_ROW_IDX];
+        if ((slot_is_occupied(table, s) != 0) & (cur_r < max_rows) & (cur_r < 28)) [
+            rb = st + SYSMON_ST_ROWS_OFF + (cur_r << 7);
+            ll = sagr_buf_push_qw!(rb, 0, 112, STR_SLOT_PFX_0, 6);
+            ll = sagr_buf_push_dec!(rb, ll, 112, s);
+            ll = sagr_buf_push_qw!(rb, ll, 112, STR_PGS_EQ_0, 3);
+            ll = sagr_buf_push_dec!(rb, ll, 112, slot_get_pages(table, s));
+            sysmon_emit_line!(disp_ctrl, st, SYSMON_COL_WHITE, rb, ll);
+        ]
+    ]
+    ret 0;
+]
+
+fn main!(pkt) [
+    if (pkt == 0) [ ret 0; ]
+    op    = pkt@[PANE_PKT_OP];
+    arena = pkt@[PANE_PKT_ARENA];
+    st    = pkt@[PANE_PKT_STATE];
+    if (arena == 0) [ ret 0; ]
+
+    if (op == PANE_OP_INIT)   [ ret sysmon_init!(arena, pkt); ]
+    if (op == PANE_OP_EVENT)  [ ret 0; ]
+    if (op == PANE_OP_RENDER) [ ret sysmon_render!(arena, st, pkt); ]
+    if (op == PANE_OP_FREE)   [
+        if (st != 0) [ exocall!(arena, EXOCALL_PMM_FREE, st, 1, 0, 0); ]
+        ret 0;
+    ]
+    ret 0;
+]

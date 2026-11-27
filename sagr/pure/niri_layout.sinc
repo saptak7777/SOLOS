@@ -1,0 +1,306 @@
+// ==========================================
+// sagr/pure/niri_layout.sinc
+// Flat Niri Workspace, Scrollable Column & Eased Camera Math (Strict Law 15)
+// ==========================================
+
+fn niri_ws_off(ws) [
+    ret WM_WS_BASE + (ws << 3);
+]
+
+fn niri_col_off(ws, col) [
+    ret ((ws << 4) + col) << 4;
+]
+
+fn niri_col_px_width(screen_w, width_mode) [
+    avail = screen_w - (SAGR_GAP << 1);
+    if (avail < 160) [ avail = 160; ]
+    w = avail;
+    if (width_mode == 0) [ w = (avail - (SAGR_GAP << 1)) / 3; ]
+    if (width_mode == 1) [ w = (avail - SAGR_GAP) >> 1; ]
+    if (width_mode == 2) [ w = ((avail * 2) / 3) - SAGR_GAP; ]
+    if (w < 120) [ w = 120; ]
+    if (w > avail) [ w = avail; ]
+    ret w;
+]
+
+fn niri_recompute_ws!(wm, cols_ptr, ws, screen_w) [
+    cnt = wm@[(niri_ws_off(ws) + WS_LENS_COL_CNT)];
+    if (cnt < 0) [ cnt = 0; ]
+    if (cnt > SAGR_MAX_COLS) [ cnt = SAGR_MAX_COLS; ]
+    cur_x = SAGR_GAP;
+    loop (c:16 = 0 .. cnt) [
+        coff = niri_col_off(ws, c);
+        cw = niri_col_px_width(screen_w, cols_ptr@[(coff + COL_LENS_WIDTH_MOD)]);
+        cols_ptr@[(coff + COL_LENS_X)] = cur_x;
+        cols_ptr@[(coff + COL_LENS_W)] = cw;
+        cur_x = cur_x + cw + SAGR_GAP;
+    ]
+    ret 0;
+]
+
+fn niri_ensure_focus_visible!(wm, cols_ptr, ws, screen_w) [
+    wbase = niri_ws_off(ws);
+    cnt = wm@[(wbase + WS_LENS_COL_CNT)];
+    if (cnt < 1) [
+        wm@[(wbase + WS_LENS_TARGET_X)] = 0;
+        ret 0;
+    ]
+    fc = wm@[(wbase + WS_LENS_FOCUS_C)];
+    if (fc < 0) [ fc = 0; ]
+    if (!(fc < cnt)) [ fc = cnt - 1; ]
+    wm@[(wbase + WS_LENS_FOCUS_C)] = fc;
+
+    coff = niri_col_off(ws, fc);
+    fx0  = cols_ptr@[(coff + COL_LENS_X)];
+    fw   = cols_ptr@[(coff + COL_LENS_W)];
+    tgt  = wm@[(wbase + WS_LENS_TARGET_X)];
+
+    left_need  = fx0 - SAGR_GAP;
+    right_need = (fx0 + fw + SAGR_GAP) - screen_w;
+    if (left_need < tgt) [ tgt = left_need; ]
+    if (right_need > tgt) [ tgt = right_need; ]
+    if (tgt < 0) [ tgt = 0; ]
+
+    wm@[(wbase + WS_LENS_TARGET_X)] = tgt;
+    ret 0;
+]
+
+fn niri_is_col_visible(col_x, col_w, scroll_x, screen_w) [
+    sx = col_x - scroll_x;
+    ret ((sx + col_w) > 0) & (sx < screen_w);
+]
+
+fn niri_step_camera!(wm, ws) [
+    wbase = niri_ws_off(ws);
+    cur = wm@[(wbase + WS_LENS_SCROLL_X)];
+    tgt = wm@[(wbase + WS_LENS_TARGET_X)];
+    if (cur == tgt) [
+        ret 0;
+    ]
+    diff = tgt - cur;
+    sign = 1;
+    abs_d = diff;
+    if (diff < 0) [
+        sign = -1;
+        abs_d = 0 - diff;
+    ]
+    if (!(abs_d > 2)) [
+        wm@[(wbase + WS_LENS_SCROLL_X)] = tgt;
+        ret 1;
+    ]
+    step = (abs_d + 2) / 3;
+    wm@[(wbase + WS_LENS_SCROLL_X)] = cur + (sign * step);
+    ret 1;
+]
+
+fn niri_pane_rect!(cols_ptr, ws, col, row_idx, scroll_x, screen_h, out_xywh) [
+    coff     = niri_col_off(ws, col);
+    pane_cnt = cols_ptr@[(coff + COL_LENS_PANE_CNT)];
+    tab_mode = cols_ptr@[(coff + COL_LENS_TAB_MODE)];
+    col_x    = cols_ptr@[(coff + COL_LENS_X)] - scroll_x;
+    col_w    = cols_ptr@[(coff + COL_LENS_W)];
+    body_y   = SAGR_BAR_H + SAGR_GAP;
+    body_h   = screen_h - SAGR_BAR_H - (SAGR_GAP << 1);
+    if ((pane_cnt < 1) | (body_h < 32)) [
+        ret 0;
+    ]
+
+    if ((tab_mode != 0) | (pane_cnt == 1)) [
+        out_xywh@[0] = col_x;
+        out_xywh@[1] = body_y;
+        out_xywh@[2] = col_w;
+        out_xywh@[3] = body_h;
+        ret 1;
+    ]
+
+    gaps   = (pane_cnt - 1) * SAGR_GAP;
+    base_h = (body_h - gaps) / pane_cnt;
+    py     = body_y + (row_idx * (base_h + SAGR_GAP));
+    ph     = base_h;
+    if (row_idx == (pane_cnt - 1)) [
+        ph = (body_y + body_h) - py;
+    ]
+    out_xywh@[0] = col_x;
+    out_xywh@[1] = py;
+    out_xywh@[2] = col_w;
+    out_xywh@[3] = ph;
+    ret 1;
+]
+
+fn niri_copy_col!(cols_ptr, dst_off, src_off) [
+    loop (q:16 = 0 .. 16) [
+        cols_ptr@[(dst_off + q)] = cols_ptr@[(src_off + q)];
+    ]
+    ret 0;
+]
+
+fn niri_zero_col!(cols_ptr, coff) [
+    loop (q:16 = 0 .. 16) [
+        cols_ptr@[(coff + q)] = 0;
+    ]
+    ret 0;
+]
+
+fn niri_insert_col!(wm, cols_ptr, ws, after_col, pane_id, width_mode, screen_w) [
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    if (!(cnt < SAGR_MAX_COLS)) [
+        ret -1;
+    ]
+    ins = 0;
+    if (cnt > 0) [
+        ins = after_col + 1;
+        if (ins < 0) [ ins = 0; ]
+        if (ins > cnt) [ ins = cnt; ]
+    ]
+
+    // Shift [ins .. cnt-1] right cleanly from tail backward
+    mv_n = cnt - ins;
+    loop (k:16 = 0 .. mv_n) [
+        idx = cnt - 1 - k;
+        niri_copy_col!(cols_ptr, niri_col_off(ws, idx + 1), niri_col_off(ws, idx));
+    ]
+
+    coff = niri_col_off(ws, ins);
+    niri_zero_col!(cols_ptr, coff);
+    cols_ptr@[(coff + COL_LENS_PANE_CNT)]  = 1;
+    cols_ptr@[(coff + COL_LENS_FOCUS_P)]   = 0;
+    cols_ptr@[(coff + COL_LENS_WIDTH_MOD)] = width_mode;
+    cols_ptr@[(coff + COL_LENS_TAB_MODE)]  = SAGR_COL_MODE_STACK;
+    cols_ptr@[(coff + COL_LENS_PANE_BASE)] = pane_id;
+
+    wm@[(wbase + WS_LENS_COL_CNT)] = cnt + 1;
+    wm@[(wbase + WS_LENS_FOCUS_C)] = ins;
+    niri_recompute_ws!(wm, cols_ptr, ws, screen_w);
+    niri_ensure_focus_visible!(wm, cols_ptr, ws, screen_w);
+    ret ins;
+]
+
+fn niri_remove_pane!(wm, cols_ptr, ws, col, row_idx, screen_w) [
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    if ((col < 0) | (!(col < cnt))) [
+        ret 0;
+    ]
+    coff = niri_col_off(ws, col);
+    pcnt = cols_ptr@[(coff + COL_LENS_PANE_CNT)];
+    if ((row_idx < 0) | (!(row_idx < pcnt))) [
+        ret 0;
+    ]
+
+    // Shift panes above row_idx down
+    sh_p = (pcnt - 1) - row_idx;
+    loop (r:3 = 0 .. sh_p) [
+        pr = row_idx + r;
+        cols_ptr@[(coff + COL_LENS_PANE_BASE + pr)] = cols_ptr@[(coff + COL_LENS_PANE_BASE + pr + 1)];
+    ]
+    pcnt = pcnt - 1;
+    cols_ptr@[(coff + COL_LENS_PANE_CNT)] = pcnt;
+    cols_ptr@[(coff + COL_LENS_PANE_BASE + pcnt)] = 0;
+
+    if (pcnt > 0) [
+        fp = cols_ptr@[(coff + COL_LENS_FOCUS_P)];
+        if (!(fp < pcnt)) [ cols_ptr@[(coff + COL_LENS_FOCUS_P)] = pcnt - 1; ]
+        ret 0;
+    ]
+
+    // Column empty -> compact columns left
+    sh_c = (cnt - 1) - col;
+    loop (c:16 = 0 .. sh_c) [
+        cc = col + c;
+        niri_copy_col!(cols_ptr, niri_col_off(ws, cc), niri_col_off(ws, cc + 1));
+    ]
+    niri_zero_col!(cols_ptr, niri_col_off(ws, cnt - 1));
+    cnt = cnt - 1;
+    wm@[(wbase + WS_LENS_COL_CNT)] = cnt;
+    fc = wm@[(wbase + WS_LENS_FOCUS_C)];
+    if ((cnt > 0) & (!(fc < cnt))) [ fc = cnt - 1; ]
+    if (cnt == 0) [ fc = 0; ]
+    wm@[(wbase + WS_LENS_FOCUS_C)] = fc;
+    niri_recompute_ws!(wm, cols_ptr, ws, screen_w);
+    niri_ensure_focus_visible!(wm, cols_ptr, ws, screen_w);
+    ret 1;
+]
+
+fn niri_focus_col!(wm, cols_ptr, ws, delta, screen_w) [
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    if (cnt < 2) [ ret 0; ]
+    nf = wm@[(wbase + WS_LENS_FOCUS_C)] + delta;
+    if (nf < 0) [ nf = 0; ]
+    if (!(nf < cnt)) [ nf = cnt - 1; ]
+    wm@[(wbase + WS_LENS_FOCUS_C)] = nf;
+    niri_ensure_focus_visible!(wm, cols_ptr, ws, screen_w);
+    ret 1;
+]
+
+fn niri_focus_pane!(wm, cols_ptr, ws, delta) [
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    if (cnt < 1) [ ret 0; ]
+    fc   = wm@[(wbase + WS_LENS_FOCUS_C)];
+    coff = niri_col_off(ws, fc);
+    pcnt = cols_ptr@[(coff + COL_LENS_PANE_CNT)];
+    if (pcnt < 2) [ ret 0; ]
+    fp = cols_ptr@[(coff + COL_LENS_FOCUS_P)] + delta;
+    if (fp < 0) [ fp = pcnt - 1; ]
+    if (!(fp < pcnt)) [ fp = 0; ]
+    cols_ptr@[(coff + COL_LENS_FOCUS_P)] = fp;
+    ret 1;
+]
+
+fn niri_move_col!(wm, cols_ptr, ws, delta, screen_w) [
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    c0    = wm@[(wbase + WS_LENS_FOCUS_C)];
+    c1    = c0 + delta;
+    if ((cnt < 2) | (c1 < 0) | (!(c1 < cnt))) [
+        ret 0;
+    ]
+    off0 = niri_col_off(ws, c0);
+    off1 = niri_col_off(ws, c1);
+    loop (q:16 = 0 .. 16) [
+        tmp = cols_ptr@[(off0 + q)];
+        cols_ptr@[(off0 + q)] = cols_ptr@[(off1 + q)];
+        cols_ptr@[(off1 + q)] = tmp;
+    ]
+    wm@[(wbase + WS_LENS_FOCUS_C)] = c1;
+    niri_recompute_ws!(wm, cols_ptr, ws, screen_w);
+    niri_ensure_focus_visible!(wm, cols_ptr, ws, screen_w);
+    ret 1;
+]
+
+fn niri_consume_right!(wm, cols_ptr, ws, screen_w) [
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    fc    = wm@[(wbase + WS_LENS_FOCUS_C)];
+    if (!((fc + 1) < cnt)) [ ret 0; ]
+    coff0 = niri_col_off(ws, fc);
+    pcnt0 = cols_ptr@[(coff0 + COL_LENS_PANE_CNT)];
+    if (!(pcnt0 < SAGR_MAX_PANES_COL)) [ ret 0; ]
+
+    coff1 = niri_col_off(ws, fc + 1);
+    pane_id = cols_ptr@[(coff1 + COL_LENS_PANE_BASE)];
+    cols_ptr@[(coff0 + COL_LENS_PANE_BASE + pcnt0)] = pane_id;
+    cols_ptr@[(coff0 + COL_LENS_PANE_CNT)] = pcnt0 + 1;
+    niri_remove_pane!(wm, cols_ptr, ws, fc + 1, 0, screen_w);
+    wm@[(wbase + WS_LENS_FOCUS_C)] = fc;
+    niri_ensure_focus_visible!(wm, cols_ptr, ws, screen_w);
+    ret 1;
+]
+
+fn niri_expel_focused!(wm, cols_ptr, ws, screen_w) [
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    fc    = wm@[(wbase + WS_LENS_FOCUS_C)];
+    if ((cnt < 1) | (!(cnt < SAGR_MAX_COLS))) [ ret 0; ]
+    coff  = niri_col_off(ws, fc);
+    pcnt  = cols_ptr@[(coff + COL_LENS_PANE_CNT)];
+    if (pcnt < 2) [ ret 0; ]
+    fp      = cols_ptr@[(coff + COL_LENS_FOCUS_P)];
+    pane_id = cols_ptr@[(coff + COL_LENS_PANE_BASE + fp)];
+    w_mode  = cols_ptr@[(coff + COL_LENS_WIDTH_MOD)];
+    niri_remove_pane!(wm, cols_ptr, ws, fc, fp, screen_w);
+    niri_insert_col!(wm, cols_ptr, ws, fc, pane_id, w_mode, screen_w);
+    ret 1;
+]

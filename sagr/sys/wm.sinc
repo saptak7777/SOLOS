@@ -1,0 +1,674 @@
+// ==========================================
+// sagr/sys/wm.sinc
+// SAGR Niri-Style Compositor Event Loop, Top Status Bar & Per-Pane Rendering (Strict Law 15)
+// ==========================================
+
+fn sagr_width_label_qw(w_mode) [
+    if (w_mode == 0) [ ret STR_SAGR_W_1_3; ]
+    if (w_mode == 1) [ ret STR_SAGR_W_1_2; ]
+    if (w_mode == 2) [ ret STR_SAGR_W_2_3; ]
+    ret STR_SAGR_W_1_1;
+]
+
+fn sagr_default_title(kind) [
+    if (kind == SAGR_KIND_SHELL)  [ ret STR_SAGR_SHELL; ]
+    if (kind == SAGR_KIND_SYSMON) [ ret STR_SAGR_SYSMON; ]
+    ret STR_SAGR_PANE;
+]
+
+fn sagr_alloc_pane_slot(panes_ptr) [
+    loop (i:64 = 0 .. SAGR_MAX_PANES) [
+        pbase = i << 3;
+        if (panes_ptr@[(pbase + PANE_LENS_USED)] == 0) [
+            ret i;
+        ]
+    ]
+    ret -1;
+]
+
+fn sagr_free_pane_record!(arena, wm, panes_ptr, pane_id) [
+    if ((pane_id < 0) | (!(pane_id < SAGR_MAX_PANES))) [
+        ret 0;
+    ]
+    pbase = pane_id << 3;
+    if (panes_ptr@[(pbase + PANE_LENS_USED)] == 0) [
+        ret 0;
+    ]
+    slot   = panes_ptr@[(pbase + PANE_LENS_SLOT)];
+    pstate = panes_ptr@[(pbase + PANE_LENS_STATE)];
+    if ((slot != 0) & (pstate != 0)) [
+        pkt = wm + (WM_PANE_PKT << 3);
+        pkt@[PANE_PKT_OP]    = PANE_OP_FREE;
+        pkt@[PANE_PKT_ARENA] = arena;
+        pkt@[PANE_PKT_STATE] = pstate;
+        pkt@[PANE_PKT_ARG0]  = 0;
+        pkt@[PANE_PKT_ARG1]  = 0;
+        pkt@[PANE_PKT_TITLE] = 0;
+        exocall!(arena, EXOCALL_SLOT_CALL, slot, pkt, 0, 0);
+    ]
+    if (slot != 0) [
+        exocall!(arena, EXOCALL_SLOT_UNLOAD, slot, 0, 0, 0);
+    ]
+    loop (q:8 = 0 .. WM_PANE_STRIDE) [
+        panes_ptr@[(pbase + q)] = 0;
+    ]
+    ret 0;
+]
+
+fn sagr_load_pane_cell!(arena, wm, kind, out_info) [
+    out_info@[0] = 0;
+    out_info@[1] = 0;
+    out_info@[2] = sagr_default_title(kind);
+    if (kind == SAGR_KIND_PREVIEW) [
+        ret 0;
+    ]
+    n0 = FILE_LIT_SHELL_SAFE_0;
+    n1 = FILE_LIT_SHELL_SAFE_1;
+    if (kind == SAGR_KIND_SYSMON) [
+        n0 = FILE_SYSMON_SAFE_0;
+        n1 = FILE_SYSMON_SAFE_1;
+    ]
+
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, n0, n1, ext_buf) != 0) [
+        ret 0;
+    ]
+    if (case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_SAFE) [
+        ret 0;
+    ]
+    table = arena@[ARENA_LENS_LIT_TABLE];
+    slot  = slot_find_free_pane(table);
+    if (slot < 3) [
+        ret 0;
+    ]
+    lba  = ext_buf@[CASE_EXT_PG] << 3;
+    secs = ext_buf@[CASE_EXT_PAGES] << 3;
+    hval = ext_buf@[CASE_EXT_HASH];
+    if (exocall!(arena, EXOCALL_SLOT_LOAD, slot, lba, secs, hval) != LIT_EXIT_OK) [
+        ret 0;
+    ]
+
+    pkt = wm + (WM_PANE_PKT << 3);
+    pkt@[PANE_PKT_OP]    = PANE_OP_INIT;
+    pkt@[PANE_PKT_ARENA] = arena;
+    pkt@[PANE_PKT_STATE] = 0;
+    pkt@[PANE_PKT_ARG0]  = 0;
+    pkt@[PANE_PKT_ARG1]  = 0;
+    pkt@[PANE_PKT_TITLE] = 0;
+    pstate = exocall!(arena, EXOCALL_SLOT_CALL, slot, pkt, 0, 0);
+    if (pstate == 0) [
+        exocall!(arena, EXOCALL_SLOT_UNLOAD, slot, 0, 0, 0);
+        ret 0;
+    ]
+    out_info@[0] = slot;
+    out_info@[1] = pstate;
+    if (pkt@[PANE_PKT_TITLE] != 0) [
+        out_info@[2] = pkt@[PANE_PKT_TITLE];
+    ]
+    ret 1;
+]
+
+fn sagr_spawn_pane!(arena, wm, kind) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    cols_ptr  = wm@[WM_COLS_PTR];
+    panes_ptr = wm@[WM_PANES_PTR];
+    ws        = wm@[WM_CUR_WS];
+    width     = disp_ctrl@[DISP_LENS_WIDTH];
+
+    pane_id = sagr_alloc_pane_slot(panes_ptr);
+    if (pane_id < 0) [ ret -1; ]
+
+    info = wm + (WM_CMD_TMP << 3);
+    sagr_load_pane_cell!(arena, wm, kind, info);
+
+    wbase = niri_ws_off(ws);
+    after_c = wm@[(wbase + WS_LENS_FOCUS_C)];
+    if (wm@[(wbase + WS_LENS_COL_CNT)] == 0) [ after_c = -1; ]
+
+    pbase = pane_id << 3;
+    panes_ptr@[(pbase + PANE_LENS_USED)]  = 1;
+    panes_ptr@[(pbase + PANE_LENS_KIND)]  = kind;
+    panes_ptr@[(pbase + PANE_LENS_SLOT)]  = info@[0];
+    panes_ptr@[(pbase + PANE_LENS_STATE)] = info@[1];
+    panes_ptr@[(pbase + PANE_LENS_TITLE)] = info@[2];
+
+    if (niri_insert_col!(wm, cols_ptr, ws, after_c, pane_id, 1, width) < 0) [
+        sagr_free_pane_record!(arena, wm, panes_ptr, pane_id);
+        ret -1;
+    ]
+    wm@[WM_DIRTY] = 1;
+    ret pane_id;
+]
+
+fn sagr_close_focused!(arena, wm) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    cols_ptr  = wm@[WM_COLS_PTR];
+    panes_ptr = wm@[WM_PANES_PTR];
+    ws        = wm@[WM_CUR_WS];
+    width     = disp_ctrl@[DISP_LENS_WIDTH];
+
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    if (cnt < 1) [ ret 0; ]
+    fc    = wm@[(wbase + WS_LENS_FOCUS_C)];
+    coff  = niri_col_off(ws, fc);
+    fp    = cols_ptr@[(coff + COL_LENS_FOCUS_P)];
+    pane_id = cols_ptr@[(coff + COL_LENS_PANE_BASE + fp)];
+
+    niri_remove_pane!(wm, cols_ptr, ws, fc, fp, width);
+    sagr_free_pane_record!(arena, wm, panes_ptr, pane_id);
+    wm@[WM_DIRTY] = 1;
+    ret 0;
+]
+
+fn sagr_focused_pane_id(wm, cols_ptr) [
+    ws    = wm@[WM_CUR_WS];
+    wbase = niri_ws_off(ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    if (cnt < 1) [ ret -1; ]
+    fc    = wm@[(wbase + WS_LENS_FOCUS_C)];
+    coff  = niri_col_off(ws, fc);
+    fp    = cols_ptr@[(coff + COL_LENS_FOCUS_P)];
+    ret cols_ptr@[(coff + COL_LENS_PANE_BASE + fp)];
+]
+
+fn sagr_dispatch_pane_event!(arena, wm, panes_ptr, pane_id, evt) [
+    if ((pane_id < 0) | (!(pane_id < SAGR_MAX_PANES))) [ ret 0; ]
+    pbase  = pane_id << 3;
+    slot   = panes_ptr@[(pbase + PANE_LENS_SLOT)];
+    pstate = panes_ptr@[(pbase + PANE_LENS_STATE)];
+    if ((slot == 0) | (pstate == 0)) [ ret 0; ]
+
+    pkt = wm + (WM_PANE_PKT << 3);
+    pkt@[PANE_PKT_OP]    = PANE_OP_EVENT;
+    pkt@[PANE_PKT_ARENA] = arena;
+    pkt@[PANE_PKT_STATE] = pstate;
+    pkt@[PANE_PKT_ARG0]  = evt;
+    pkt@[PANE_PKT_ARG1]  = 0;
+    pkt@[PANE_PKT_TITLE] = 0;
+    ret exocall!(arena, EXOCALL_SLOT_CALL, slot, pkt, 0, 0);
+]
+
+fn sagr_drain_local!(disp_ctrl, font_ptr, wm) [
+    ret sagr_drain_ring!(disp_ctrl, font_ptr, wm@[WM_TILE_MASK], wm + (WM_CMD_TMP << 3));
+]
+
+fn sagr_render_topbar!(arena, disp_ctrl, font_ptr, wm, cols_ptr, width) [
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, 0, 0, 0), sagr_pack_ext(width, SAGR_BAR_H, SAGR_COL_BAR_BG), 0, 0);
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, 0, 0, SAGR_BAR_H - 1), sagr_pack_ext(width, 1, SAGR_COL_BORDER_DIM), 0, 0);
+
+    str_buf = wm + (WM_STR_BUF << 3);
+    cur_ws  = wm@[WM_CUR_WS];
+
+    // [ SAGR ] brand pill
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_BORDER, 6, 4), sagr_pack_ext(58, 20, SAGR_COL_PILL_BG), SAGR_COL_BORDER_FOCUS | (1 << 32), 0);
+    str_buf@[0] = STR_SAGR_BRAND;
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, 0, 14, 6), sagr_pack_ext(4, 1, SAGR_COL_BORDER_FOCUS), str_buf, 0);
+    sagr_drain_local!(disp_ctrl, font_ptr, wm);
+
+    // Workspace selector pills [1..4]
+    loop (w:4 = 0 .. SAGR_MAX_WS) [
+        px   = 74 + (w * 30);
+        wcnt = wm@[(niri_ws_off(w) + WS_LENS_COL_CNT)];
+        bcol = SAGR_COL_BORDER_DIM;
+        tcol = SAGR_COL_TEXT_DIM;
+        pbg  = SAGR_COL_PILL_BG;
+        if (wcnt > 0) [ tcol = SAGR_COL_ACCENT_GREEN; ]
+        if (w == cur_ws) [
+            bcol = SAGR_COL_BORDER_FOCUS;
+            tcol = SAGR_COL_TEXT_MAIN;
+            pbg  = SAGR_COL_TITLE_FOCUS;
+        ]
+        sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_BORDER, px, 4), sagr_pack_ext(26, 20, pbg), bcol | (1 << 32), 0);
+        str_buf@[0] = 53 + w; // '1'..'4'
+        sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, 0, px + 9, 6), sagr_pack_ext(1, 1, tcol), str_buf, 0);
+        sagr_drain_local!(disp_ctrl, font_ptr, wm);
+    ]
+
+    // Active column/layout pill: COL c/N WIDTH MODE
+    wbase = niri_ws_off(cur_ws);
+    cnt   = wm@[(wbase + WS_LENS_COL_CNT)];
+    fc    = wm@[(wbase + WS_LENS_FOCUS_C)];
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_BORDER, 202, 4), sagr_pack_ext(188, 20, SAGR_COL_PILL_BG), SAGR_COL_BORDER_DIM | (1 << 32), 0);
+    slen = 0;
+    slen = sagr_buf_push_qw!(str_buf, slen, 120, STR_SAGR_COL, 4);
+    if (cnt == 0) [
+        slen = sagr_buf_push_dec!(str_buf, slen, 120, 0);
+    ]
+    if (cnt > 0) [
+        coff = niri_col_off(cur_ws, fc);
+        slen = sagr_buf_push_dec!(str_buf, slen, 120, fc + 1);
+        if (slen < 120) [ str_buf@[slen * 1] = 115; slen = slen + 1; ]
+        slen = sagr_buf_push_dec!(str_buf, slen, 120, cnt);
+        if (slen < 120) [ str_buf@[slen * 1] = TRG_SPC; slen = slen + 1; ]
+        slen = sagr_buf_push_qw!(str_buf, slen, 120, sagr_width_label_qw(cols_ptr@[(coff + COL_LENS_WIDTH_MOD)]), 3);
+        if (slen < 120) [ str_buf@[slen * 1] = TRG_SPC; slen = slen + 1; ]
+        if (cols_ptr@[(coff + COL_LENS_TAB_MODE)] == 0) [
+            slen = sagr_buf_push_qw!(str_buf, slen, 120, STR_SAGR_STACK, 5);
+        ]
+        if (cols_ptr@[(coff + COL_LENS_TAB_MODE)] != 0) [
+            slen = sagr_buf_push_qw!(str_buf, slen, 120, STR_SAGR_TAB, 3);
+        ]
+    ]
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, 0, 210, 6), sagr_pack_ext(slen, 1, SAGR_COL_ACCENT_GOLD), str_buf, 0);
+    sagr_drain_local!(disp_ctrl, font_ptr, wm);
+
+    // Free PMM pages indicator right-aligned
+    pmm = arena@[ARENA_LENS_PMM];
+    free_pg = 0;
+    if (pmm != 0) [ free_pg = pmm@[PMM_LENS_FREE_PAGES]; ]
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_BORDER, width - 98, 4), sagr_pack_ext(92, 20, SAGR_COL_PILL_BG), SAGR_COL_BORDER_DIM | (1 << 32), 0);
+    plen = 0;
+    plen = sagr_buf_push_qw!(str_buf, plen, 120, STR_SAGR_PG, 3);
+    plen = sagr_buf_push_dec!(str_buf, plen, 120, free_pg);
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, 0, width - 90, 6), sagr_pack_ext(plen, 1, SAGR_COL_ACCENT_GREEN), str_buf, 0);
+    sagr_drain_local!(disp_ctrl, font_ptr, wm);
+
+    // Keybind hint bar between active pill and PG badge on >= 1000 px screens
+    if (!(width < 1000)) [
+        str_buf@[0] = STR_SAGR_HINT_0;
+        str_buf@[1] = STR_SAGR_HINT_1;
+        str_buf@[2] = STR_SAGR_HINT_2;
+        str_buf@[3] = STR_SAGR_HINT_3;
+        str_buf@[4] = STR_SAGR_HINT_4;
+        str_buf@[5] = STR_SAGR_HINT_5;
+        str_buf@[6] = STR_SAGR_HINT_6;
+        str_buf@[7] = STR_SAGR_HINT_7;
+        str_buf@[8] = STR_SAGR_HINT_8;
+        hlen = (width - 510) >> 3;
+        if (hlen > 72) [ hlen = 72; ]
+        if (hlen > 0) [
+            sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, 0, 400, 6), sagr_pack_ext(hlen, 1, SAGR_COL_TEXT_DIM), str_buf, 0);
+            sagr_drain_local!(disp_ctrl, font_ptr, wm);
+        ]
+    ]
+    ret 0;
+]
+
+fn sagr_render_pane_tile!(arena, wm, col_idx, row_idx, pane_id, is_focused) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    bi        = arena@[ARENA_LENS_BOOT_INFO];
+    font_ptr  = bi@[BOOT_LENS_FONT_BASE];
+    cols_ptr  = wm@[WM_COLS_PTR];
+    panes_ptr = wm@[WM_PANES_PTR];
+    width     = disp_ctrl@[DISP_LENS_WIDTH];
+    height    = disp_ctrl@[DISP_LENS_HEIGHT];
+    ws        = wm@[WM_CUR_WS];
+
+    xywh = wm + (WM_RECT_TMP << 3);
+    fx = xywh@[0];
+    fy = xywh@[1];
+    fw = xywh@[2];
+    fh = xywh@[3];
+
+    coff     = niri_col_off(ws, col_idx);
+    tab_mode = cols_ptr@[(coff + COL_LENS_TAB_MODE)];
+    pcnt     = cols_ptr@[(coff + COL_LENS_PANE_CNT)];
+    focus_p  = cols_ptr@[(coff + COL_LENS_FOCUS_P)];
+
+    body_clip = sagr_pack_clip(0, SAGR_BAR_H, width, height - SAGR_BAR_H);
+
+    b_col = SAGR_COL_BORDER_DIM;
+    t_bg  = SAGR_COL_TITLE_IDLE;
+    t_fg  = SAGR_COL_TEXT_DIM;
+    if (is_focused != 0) [
+        b_col = SAGR_COL_BORDER_FOCUS;
+        t_bg  = SAGR_COL_TITLE_FOCUS;
+        t_fg  = SAGR_COL_TEXT_MAIN;
+    ]
+
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_BORDER | SAGR_FLAG_CLIP, fx, fy), sagr_pack_ext(fw, fh, SAGR_COL_PANE_BG), b_col | (SAGR_BORDER_PX << 32), body_clip);
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_CLIP, fx + SAGR_BORDER_PX, fy + SAGR_BORDER_PX), sagr_pack_ext(fw - (SAGR_BORDER_PX << 1), SAGR_TITLE_H, t_bg), 0, body_clip);
+
+    str_buf = wm + (WM_STR_BUF << 3);
+    pbase   = pane_id << 3;
+    title_qw = panes_ptr@[(pbase + PANE_LENS_TITLE)];
+    if (title_qw == 0) [ title_qw = STR_SAGR_PANE; ]
+    tlen = sagr_buf_push_qw!(str_buf, 0, 120, title_qw, 8);
+    actual_len = 0;
+    loop (ti:8 = 0 .. tlen) [
+        if ((str_buf@[ti * 1] & 255) != 0) [
+            actual_len = ti + 1;
+        ]
+    ]
+    if (actual_len > 0) [
+        tclip = sagr_pack_clip(fx + 6, fy + 2, fw - 12, SAGR_TITLE_H);
+        sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, SAGR_FLAG_CLIP, fx + 8, fy + 5), sagr_pack_ext(actual_len, 1, t_fg), str_buf, tclip);
+    ]
+    sagr_drain_local!(disp_ctrl, font_ptr, wm);
+
+    // If tabbed multi-pane column, show right-aligned tab index badge e.g. [TAB 1/2]
+    if ((tab_mode != 0) & (pcnt > 1) & (fw > 110)) [
+        blen = 0;
+        blen = sagr_buf_push_qw!(str_buf, blen, 120, STR_SAGR_TAB, 3);
+        if (blen < 120) [ str_buf@[blen * 1] = TRG_SPC; blen = blen + 1; ]
+        blen = sagr_buf_push_dec!(str_buf, blen, 120, focus_p + 1);
+        if (blen < 120) [ str_buf@[blen * 1] = 115; blen = blen + 1; ]
+        blen = sagr_buf_push_dec!(str_buf, blen, 120, pcnt);
+        tclip2 = sagr_pack_clip(fx + 6, fy + 2, fw - 12, SAGR_TITLE_H);
+        sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, SAGR_FLAG_CLIP, fx + fw - (blen << 3) - 10, fy + 5), sagr_pack_ext(blen, 1, SAGR_COL_ACCENT_GOLD), str_buf, tclip2);
+        sagr_drain_local!(disp_ctrl, font_ptr, wm);
+    ]
+
+    cx = fx + SAGR_BORDER_PX;
+    cy = fy + SAGR_BORDER_PX + SAGR_TITLE_H;
+    cw = fw - (SAGR_BORDER_PX << 1);
+    ch = fh - (SAGR_BORDER_PX << 1) - SAGR_TITLE_H;
+    if ((cw > 16) & (ch > 16)) [
+        slot   = panes_ptr@[(pbase + PANE_LENS_SLOT)];
+        pstate = panes_ptr@[(pbase + PANE_LENS_STATE)];
+        if ((slot != 0) & (pstate != 0)) [
+            pkt = wm + (WM_PANE_PKT << 3);
+            pkt@[PANE_PKT_OP]    = PANE_OP_RENDER;
+            pkt@[PANE_PKT_ARENA] = arena;
+            pkt@[PANE_PKT_STATE] = pstate;
+            pkt@[PANE_PKT_ARG0]  = sagr_pack_clip(cx, cy, cw, ch);
+            pkt@[PANE_PKT_ARG1]  = is_focused;
+            pkt@[PANE_PKT_TITLE] = 0;
+            exocall!(arena, EXOCALL_SLOT_CALL, slot, pkt, 0, 0);
+            if (pkt@[PANE_PKT_TITLE] != 0) [
+                panes_ptr@[(pbase + PANE_LENS_TITLE)] = pkt@[PANE_PKT_TITLE];
+            ]
+        ]
+        if ((slot == 0) | (pstate == 0)) [
+            // Phase 3 lightweight preview interior when external pane .safe not seeded
+            pclip = sagr_pack_clip(cx, cy, cw, ch);
+            plen = sagr_buf_push_qw!(str_buf, 0, 120, STR_SAGR_COL, 4);
+            plen = sagr_buf_push_dec!(str_buf, plen, 120, col_idx + 1);
+            sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, SAGR_FLAG_CLIP, cx + 12, cy + 12), sagr_pack_ext(plen, 1, t_fg), str_buf, pclip);
+        ]
+    ]
+    // Drain ring immediately after EVERY pane to prevent 256-slot overflow!
+    sagr_drain_local!(disp_ctrl, font_ptr, wm);
+    ret 0;
+]
+
+fn sagr_render_frame!(arena, wm) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    bi        = arena@[ARENA_LENS_BOOT_INFO];
+    font_ptr  = bi@[BOOT_LENS_FONT_BASE];
+    cols_ptr  = wm@[WM_COLS_PTR];
+    width     = disp_ctrl@[DISP_LENS_WIDTH];
+    height    = disp_ctrl@[DISP_LENS_HEIGHT];
+    ws        = wm@[WM_CUR_WS];
+
+    // 1. Desktop background & top bar
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, 0, 0, SAGR_BAR_H), sagr_pack_ext(width, height - SAGR_BAR_H, SAGR_COL_DESKTOP_BG), 0, 0);
+    sagr_drain_local!(disp_ctrl, font_ptr, wm);
+    sagr_render_topbar!(arena, disp_ctrl, font_ptr, wm, cols_ptr, width);
+
+    // 2. Render visible columns only (strict off-screen culling)
+    wbase    = niri_ws_off(ws);
+    col_cnt  = wm@[(wbase + WS_LENS_COL_CNT)];
+    focus_c  = wm@[(wbase + WS_LENS_FOCUS_C)];
+    scroll_x = wm@[(wbase + WS_LENS_SCROLL_X)];
+    xywh     = wm + (WM_RECT_TMP << 3);
+
+    if (col_cnt == 0) [
+        str_buf = wm + (WM_STR_BUF << 3);
+        str_buf@[0] = STR_SAGR_NO_PANES;
+        sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, 0, (width >> 1) - 32, height >> 1), sagr_pack_ext(8, 1, SAGR_COL_TEXT_DIM), str_buf, 0);
+        sagr_drain_local!(disp_ctrl, font_ptr, wm);
+    ]
+
+    loop (c:16 = 0 .. col_cnt) [
+        coff  = niri_col_off(ws, c);
+        col_x = cols_ptr@[(coff + COL_LENS_X)];
+        col_w = cols_ptr@[(coff + COL_LENS_W)];
+        if (niri_is_col_visible(col_x, col_w, scroll_x, width) != 0) [
+            pcnt     = cols_ptr@[(coff + COL_LENS_PANE_CNT)];
+            focus_p  = cols_ptr@[(coff + COL_LENS_FOCUS_P)];
+            tab_mode = cols_ptr@[(coff + COL_LENS_TAB_MODE)];
+            if (tab_mode == 0) [
+                loop (r:3 = 0 .. pcnt) [
+                    if (niri_pane_rect!(cols_ptr, ws, c, r, scroll_x, height, xywh) != 0) [
+                        pane_id = cols_ptr@[(coff + COL_LENS_PANE_BASE + r)];
+                        is_foc  = (c == focus_c) & (r == focus_p);
+                        sagr_render_pane_tile!(arena, wm, c, r, pane_id, is_foc);
+                    ]
+                ]
+            ]
+            if (tab_mode != 0) [
+                if ((pcnt > 0) & (niri_pane_rect!(cols_ptr, ws, c, focus_p, scroll_x, height, xywh) != 0)) [
+                    pane_id = cols_ptr@[(coff + COL_LENS_PANE_BASE + focus_p)];
+                    is_foc  = (c == focus_c);
+                    sagr_render_pane_tile!(arena, wm, c, focus_p, pane_id, is_foc);
+                ]
+            ]
+        ]
+    ]
+
+    // 3. Final COMMIT & dirty 16x16 AVX-512 tile flush
+    seq = wm@[WM_FRAME_SEQ] + 1;
+    wm@[WM_FRAME_SEQ] = seq;
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_COMMIT, 0, 0, 0), 0, seq, 0);
+    sagr_drain_local!(disp_ctrl, font_ptr, wm);
+    wm@[WM_DIRTY] = 0;
+    ret 0;
+]
+
+fn sagr_handle_key!(arena, wm, evt) [
+    ev_type = input_evt_type(evt);
+    mods    = input_evt_mods(evt);
+    key     = input_evt_key(evt);
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    cols_ptr  = wm@[WM_COLS_PTR];
+    panes_ptr = wm@[WM_PANES_PTR];
+    ws        = wm@[WM_CUR_WS];
+    width     = disp_ctrl@[DISP_LENS_WIDTH];
+
+    is_alt = (mods & MOD_ANY_ALT) != 0;
+    if ((ev_type == EVT_KEY_DOWN) & (is_alt != 0)) [
+        is_shift = (mods & MOD_ANY_SHIFT) != 0;
+        if ((is_shift != 0) & (key == KEY_TRG_UPPER_Q)) [
+            wm@[WM_RUNNING] = 0;
+            ret 0;
+        ]
+        if ((is_shift == 0) & (key == KEY_TRG_LOWER_Q)) [
+            sagr_close_focused!(arena, wm);
+            ret 0;
+        ]
+        if (key == TRG_RET) [
+            sagr_spawn_pane!(arena, wm, SAGR_KIND_SHELL);
+            ret 0;
+        ]
+        if ((is_shift == 0) & (key == KEY_TRG_LOWER_S)) [
+            sagr_spawn_pane!(arena, wm, SAGR_KIND_SYSMON);
+            ret 0;
+        ]
+        if ((is_shift != 0) & ((key == KEY_TRG_UPPER_H) | (key == TRG_ARROW_LEFT))) [
+            if (niri_move_col!(wm, cols_ptr, ws, -1, width) != 0) [ wm@[WM_DIRTY] = 1; ]
+            ret 0;
+        ]
+        if ((is_shift != 0) & ((key == KEY_TRG_UPPER_L) | (key == TRG_ARROW_RIGHT))) [
+            if (niri_move_col!(wm, cols_ptr, ws, 1, width) != 0) [ wm@[WM_DIRTY] = 1; ]
+            ret 0;
+        ]
+        if ((is_shift == 0) & ((key == KEY_TRG_LOWER_H) | (key == TRG_ARROW_LEFT))) [
+            if (niri_focus_col!(wm, cols_ptr, ws, -1, width) != 0) [ wm@[WM_DIRTY] = 1; ]
+            ret 0;
+        ]
+        if ((is_shift == 0) & ((key == KEY_TRG_LOWER_L) | (key == TRG_ARROW_RIGHT))) [
+            if (niri_focus_col!(wm, cols_ptr, ws, 1, width) != 0) [ wm@[WM_DIRTY] = 1; ]
+            ret 0;
+        ]
+        if ((is_shift == 0) & ((key == KEY_TRG_LOWER_J) | (key == TRG_ARROW_DOWN))) [
+            if (niri_focus_pane!(wm, cols_ptr, ws, 1) != 0) [ wm@[WM_DIRTY] = 1; ]
+            ret 0;
+        ]
+        if ((is_shift == 0) & ((key == KEY_TRG_LOWER_K) | (key == TRG_ARROW_UP))) [
+            if (niri_focus_pane!(wm, cols_ptr, ws, -1) != 0) [ wm@[WM_DIRTY] = 1; ]
+            ret 0;
+        ]
+        if ((is_shift == 0) & (key == KEY_TRG_LOWER_I)) [
+            if (niri_consume_right!(wm, cols_ptr, ws, width) != 0) [ wm@[WM_DIRTY] = 1; ]
+            ret 0;
+        ]
+        if ((is_shift == 0) & (key == KEY_TRG_LOWER_O)) [
+            if (niri_expel_focused!(wm, cols_ptr, ws, width) != 0) [ wm@[WM_DIRTY] = 1; ]
+            ret 0;
+        ]
+        if ((is_shift == 0) & (key == KEY_TRG_LOWER_R)) [
+            wbase = niri_ws_off(ws);
+            if (wm@[(wbase + WS_LENS_COL_CNT)] > 0) [
+                fc   = wm@[(wbase + WS_LENS_FOCUS_C)];
+                coff = niri_col_off(ws, fc);
+                cols_ptr@[(coff + COL_LENS_WIDTH_MOD)] = (cols_ptr@[(coff + COL_LENS_WIDTH_MOD)] + 1) & 3;
+                niri_recompute_ws!(wm, cols_ptr, ws, width);
+                niri_ensure_focus_visible!(wm, cols_ptr, ws, width);
+                wm@[WM_DIRTY] = 1;
+            ]
+            ret 0;
+        ]
+        if ((is_shift == 0) & (key == KEY_TRG_LOWER_T)) [
+            wbase = niri_ws_off(ws);
+            if (wm@[(wbase + WS_LENS_COL_CNT)] > 0) [
+                fc   = wm@[(wbase + WS_LENS_FOCUS_C)];
+                coff = niri_col_off(ws, fc);
+                cols_ptr@[(coff + COL_LENS_TAB_MODE)] = cols_ptr@[(coff + COL_LENS_TAB_MODE)] ^ 1;
+                wm@[WM_DIRTY] = 1;
+            ]
+            ret 0;
+        ]
+        if ((!(key < KEY_TRG_1)) & (!(key > KEY_TRG_4))) [
+            nws = key - KEY_TRG_1;
+            if (nws != ws) [
+                wm@[WM_CUR_WS] = nws;
+                wm@[WM_DIRTY]  = 1;
+            ]
+            ret 0;
+        ]
+    ]
+
+    if ((ev_type == EVT_KEY_DOWN) & (is_alt == 0)) [
+        pane_id = sagr_focused_pane_id(wm, cols_ptr);
+        if (!(pane_id < 0)) [
+            r = sagr_dispatch_pane_event!(arena, wm, panes_ptr, pane_id, evt);
+            if (r == 1) [
+                sagr_close_focused!(arena, wm);
+                ret 0;
+            ]
+            wm@[WM_DIRTY] = 1;
+        ]
+    ]
+    ret 0;
+]
+
+fn sagr_cleanup_wm!(arena, wm) [
+    if (wm == 0) [ ret 0; ]
+    panes_ptr = wm@[WM_PANES_PTR];
+    if (panes_ptr != 0) [
+        loop (i:64 = 0 .. SAGR_MAX_PANES) [
+            sagr_free_pane_record!(arena, wm, panes_ptr, i);
+        ]
+        exocall!(arena, EXOCALL_PMM_FREE, panes_ptr, 1, 0, 0);
+    ]
+    cols_ptr  = wm@[WM_COLS_PTR];
+    tile_mask = wm@[WM_TILE_MASK];
+    if (cols_ptr != 0)  [ exocall!(arena, EXOCALL_PMM_FREE, cols_ptr, 2, 0, 0); ]
+    if (tile_mask != 0) [ exocall!(arena, EXOCALL_PMM_FREE, tile_mask, 1, 0, 0); ]
+    exocall!(arena, EXOCALL_PMM_FREE, wm, 1, 0, 0);
+    ret 0;
+]
+
+fn sagr_run_compositor!(arena) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    ring_ptr  = arena@[ARENA_LENS_RING];
+    if ((disp_ctrl == 0) | (ring_ptr == 0)) [
+        ret 1;
+    ]
+
+    wm        = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    cols_ptr  = exocall!(arena, EXOCALL_PMM_ALLOC, 2, 0, 0, 0);
+    panes_ptr = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    tile_mask = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if ((wm == 0) | (cols_ptr == 0) | (panes_ptr == 0) | (tile_mask == 0)) [
+        if (tile_mask != 0) [ exocall!(arena, EXOCALL_PMM_FREE, tile_mask, 1, 0, 0); ]
+        if (panes_ptr != 0) [ exocall!(arena, EXOCALL_PMM_FREE, panes_ptr, 1, 0, 0); ]
+        if (cols_ptr != 0)  [ exocall!(arena, EXOCALL_PMM_FREE, cols_ptr, 2, 0, 0); ]
+        if (wm != 0)        [ exocall!(arena, EXOCALL_PMM_FREE, wm, 1, 0, 0); ]
+        ret 2;
+    ]
+
+    loop (i:512 = 0 .. 512) [
+        wm@[i]        = 0;
+        panes_ptr@[i] = 0;
+    ]
+    loop (j:1024 = 0 .. 1024) [
+        cols_ptr@[j] = 0;
+    ]
+    tile_clear_all!(tile_mask);
+
+    wm@[WM_COLS_PTR]  = cols_ptr;
+    wm@[WM_PANES_PTR] = panes_ptr;
+    wm@[WM_TILE_MASK] = tile_mask;
+    wm@[WM_RUNNING]   = 1;
+    wm@[WM_DIRTY]     = 1;
+
+    ext_buf = arena@[ARENA_LENS_META_BUF] + 512;
+    if (case_find_artifact!(arena, FILE_GUI_LIVE_0, 0, ext_buf) == 0) [
+        wm@[WM_LIVE_MODE] = 1;
+    ]
+
+    // Initial workspace 0 strip: spawn primary shell pane cleanly (+ sysmon if available!)
+    sagr_spawn_pane!(arena, wm, SAGR_KIND_SHELL);
+    if (wm@[WM_LIVE_MODE] != 0) [
+        if (case_find_artifact!(arena, FILE_SYSMON_SAFE_0, FILE_SYSMON_SAFE_1, ext_buf) == 0) [
+            sagr_spawn_pane!(arena, wm, SAGR_KIND_SYSMON);
+            niri_focus_col!(wm, cols_ptr, 0, -1, disp_ctrl@[DISP_LENS_WIDTH]);
+        ]
+    ]
+    sagr_render_frame!(arena, wm);
+
+    if (wm@[WM_LIVE_MODE] == 0) [
+        exit_res = 0;
+        if (disp_ctrl@[DISP_LENS_FRAME_SEQ] < 1) [
+            exit_res = 3;
+        ]
+        sagr_cleanup_wm!(arena, wm);
+        ret exit_res;
+    ]
+
+    loop (tick:1000000000 = 0 .. 1000000000) [
+        if (wm@[WM_RUNNING] == 0) [
+            sagr_cleanup_wm!(arena, wm);
+            ret 0;
+        ]
+
+        exocall!(arena, EXOCALL_INPUT_POLL, 0, 0, 0, 0);
+        has_evt = 0;
+        loop (ev_batch:32 = 0 .. 32) [
+            evt = ring_pop!(ring_ptr);
+            if (!(evt < 0)) [
+                has_evt = 1;
+                sagr_handle_key!(arena, wm, evt);
+            ]
+        ]
+
+        if (wm@[WM_RUNNING] == 0) [
+            sagr_cleanup_wm!(arena, wm);
+            ret 0;
+        ]
+
+        ws = wm@[WM_CUR_WS];
+        moved = niri_step_camera!(wm, ws);
+        if (moved != 0) [
+            wm@[WM_DIRTY] = 1;
+        ]
+        if (wm@[WM_DIRTY] != 0) [
+            sagr_render_frame!(arena, wm);
+        ]
+
+        wbase = niri_ws_off(ws);
+        is_anim = wm@[(wbase + WS_LENS_SCROLL_X)] != wm@[(wbase + WS_LENS_TARGET_X)];
+        if (is_anim != 0) [
+            exocall!(arena, EXOCALL_SLEEP_US, 16666, 1, 0, 0);
+        ]
+        if ((is_anim == 0) & (has_evt == 0)) [
+            exocall!(arena, EXOCALL_SLEEP_US, 10000000, 1, 0, 0);
+        ]
+    ]
+
+    sagr_cleanup_wm!(arena, wm);
+    ret 0;
+]

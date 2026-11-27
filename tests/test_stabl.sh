@@ -34,7 +34,7 @@ printf "${BLUE}=================================================================
 rm -rf "$ESP_DIR/EFI/SOLOS" "$ESP_DIR/EFI/BOOT"
 mkdir -p "$ESP_DIR/EFI/BOOT" "$ESP_DIR/EFI/SOLOS"
 mkdir -p "$BUILD_DIR"
-dd if=/dev/zero of="$DISK_IMG" bs=1M count=2 status=none 2>/dev/null
+dd if=/dev/zero of="$DISK_IMG" bs=1M count=4 status=none 2>/dev/null
 
 # ------------------------------------------------------------------------------
 # Build Binaries
@@ -66,8 +66,10 @@ cp "$ROOT_DIR/shark/data/font_trg_terminus.bin" "$ESP_DIR/EFI/SOLOS/FONT.BIN"
 # Compile Hardware Invariant Proof Cell (selftest.safe at LBA 200)
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/selftest/build.staff" "$BUILD_DIR/selftest.safe"
 
-# Compile resident shell, service supervisor, coreutils, and bare-metal compiler cell
+# Compile resident compositor, shell pane, sysmon pane, service supervisor, coreutils, and bare-metal compiler cell
+"$ROOT_DIR/bin/staff" "$ROOT_DIR/sagr/build.staff" "$BUILD_DIR/sagr.safe"
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/lit_shell/build.staff" "$BUILD_DIR/lit_shell.safe"
+"$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/sysmon/build.staff" "$BUILD_DIR/sysmon.safe"
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/minit/build.staff" "$BUILD_DIR/minit.safe"
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/ls/build.staff" "$BUILD_DIR/ls.safe"
 "$ROOT_DIR/bin/staff" "$ROOT_DIR/coreutils/cat/build.staff" "$BUILD_DIR/cat.safe"
@@ -129,7 +131,9 @@ with open('$DISK_IMG', 'r+b') as f:
     v1_data       = open('$BUILD_DIR/v1.safe', 'rb').read()
     v2_data       = open('$BUILD_DIR/v2.safe', 'rb').read()
     minit_data    = open('$BUILD_DIR/minit.safe', 'rb').read()
+    sagr_data     = open('$BUILD_DIR/sagr.safe', 'rb').read()
     shell_data    = open('$BUILD_DIR/lit_shell.safe', 'rb').read()
+    sysmon_data   = open('$BUILD_DIR/sysmon.safe', 'rb').read()
     sinc_data     = open('$BUILD_DIR/sinc.safe', 'rb').read()
     ls_data       = open('$BUILD_DIR/ls.safe', 'rb').read()
     cat_data      = open('$BUILD_DIR/cat.safe', 'rb').read()
@@ -140,7 +144,7 @@ with open('$DISK_IMG', 'r+b') as f:
     bad1_trg_data = open('$BUILD_DIR/bad1.trg', 'rb').read()
     bad2_trg_data = open('$BUILD_DIR/bad2.trg', 'rb').read()
 
-    total_pages = 512
+    total_pages = 1024
     sb = bytearray(4096)
     sb[0:8]   = int(1163084099).to_bytes(8, 'little') # CASE magic
     sb[8:16]  = int(1).to_bytes(8, 'little')          # version 1
@@ -160,7 +164,9 @@ with open('$DISK_IMG', 'r+b') as f:
         (1, 8478446585722159, 0, v1_data),
         (1, 8478446585722415, 0, v2_data),
         (1, 1886160714249740838, 7711, minit_data),
+        (1, 2241153230432115244, 30, sagr_data),
         (1, 2674611705646752293, 33118931975461, shell_data),
+        (1, 3241790360169230892, 1974042, sysmon_data),
         (1, 2241153230180917804, 30, sinc_data),
         (1, 8478446585719845, 0, ls_data),
         (1, 2170482325944343068, 0, cat_data),
@@ -619,7 +625,7 @@ fi
 # Gate 19: minit Service Supervision, Bitmask DAG & 3-Layer Handoff
 # ------------------------------------------------------------------------------
 # Verified via Slot 0 minit (2048) resolving cycle self-test (-1),
-# running Slot 1 (v1 -> 100, ONESHOT) -> Slot 2 (lit_shell -> 1337, CRITICAL)
+# running Slot 1 (selftest -> 0, ONESHOT) -> Slot 2 (sagr -> 0, CRITICAL)
 # with 3-tier nested zero-leak PMM parity
 set +e
 "$QEMU" \
@@ -634,7 +640,7 @@ MINIT_EXIT=$?
 set -e
 
 if [[ $MINIT_EXIT -eq 85 ]]; then
-    pass "Gate 19: minit Service Supervision, Bitmask DAG & 3-Layer Zero-Leak Handoff" "Slot 0 minit -> DAG (Slot 1 -> Slot 2 lit_shell) -> 3-tier parity [PASS]"
+    pass "Gate 19: minit Service Supervision, Bitmask DAG & 3-Layer Zero-Leak Handoff" "Slot 0 minit -> DAG (Slot 1 -> Slot 2 sagr.safe) -> 3-tier parity [PASS]"
 else
     fail "Gate 19: minit Service Supervision, Bitmask DAG & 3-Layer Zero-Leak Handoff" "Expected exit 85, got $MINIT_EXIT"
 fi

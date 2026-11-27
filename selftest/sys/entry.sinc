@@ -808,6 +808,274 @@ fn test_display_abi!(arena) [
     ret 0;
 ]
 
+fn test_gui_phase1!(arena) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    con       = arena@[ARENA_LENS_CONSOLE];
+    bi        = arena@[ARENA_LENS_BOOT_INFO];
+    if ((disp_ctrl == 0) | (con == 0) | (bi == 0)) [
+        ret 43;
+    ]
+
+    fb_base = bi@[BOOT_LENS_FB_BASE];
+    width   = con@[CONSOLE_LENS_WIDTH];
+    height  = con@[CONSOLE_LENS_HEIGHT];
+    stride  = con@[CONSOLE_LENS_STRIDE];
+    if ((disp_ctrl@[DISP_LENS_FRONT_FB] != fb_base) | (con@[CONSOLE_LENS_FB_BASE] != fb_base)) [
+        ret 43;
+    ]
+    if ((disp_ctrl@[DISP_LENS_BACK_FB] == 0) | (disp_ctrl@[DISP_LENS_BACK_FB] != con@[CONSOLE_LENS_BACKBUFFER])) [
+        ret 43;
+    ]
+    if ((disp_ctrl@[DISP_LENS_WIDTH] != width) | (disp_ctrl@[DISP_LENS_HEIGHT] != height) | (disp_ctrl@[DISP_LENS_STRIDE] != stride)) [
+        ret 43;
+    ]
+    if ((stride < (width << 2)) | ((stride & 3) != 0)) [
+        ret 43;
+    ]
+    if ((disp_ctrl@[DISP_LENS_FORMAT] != SURF_FMT_BGRA8) | (disp_ctrl@[DISP_LENS_CMD_RING] == 0)) [
+        ret 43;
+    ]
+
+    // Verify 2 MB PDEs overlapping fb_base were split and 4 KB PTEs carry PAT4 = WC (PAT=1, PCD=0, PWT=0)
+    cr3_base = arena@[ARENA_LENS_CR3] & 4503599627366400;
+    loop (pg:2 = 0 .. 2) [
+        va        = fb_base + (pg << 12);
+        pml4_idx  = (va >> 39) & 511;
+        pdpt_base = cr3_base@[pml4_idx] & 4503599627366400;
+        pdpt_idx   = (va >> 30) & 511;
+        pdpt_entry = pdpt_base@[pdpt_idx];
+        if ((pdpt_entry & 128) != 0) [
+            ret 44;
+        ]
+        pd_base    = pdpt_entry & 4503599627366400;
+        pd_idx    = (va >> 21) & 511;
+        pd_entry  = pd_base@[pd_idx];
+        if ((pd_entry & 128) != 0) [
+            ret 44;
+        ]
+        pt_base = pd_entry & 4503599627366400;
+        pt_idx  = (va >> 12) & 511;
+        pte     = pt_base@[pt_idx];
+        if ((pte & 152) != 128) [
+            ret 44;
+        ]
+    ]
+
+    // Verify CONSOLE_LENS_STREAM_BUF captures pure TRG console output with 0 PMM leaks
+    p0 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if (p0 == 0) [
+        ret 45;
+    ]
+    buf = p0 + 24;
+    p0@[0] = 0;
+    p0@[1] = 2048;
+    p0@[2] = buf;
+    con@[CONSOLE_LENS_STREAM_BUF] = p0;
+    console_print_dec!(con, 42);
+    console_newline!(con);
+    cap_len = p0@[0];
+    b0 = buf@[0 * 1];
+    b1 = buf@[1 * 1];
+    b2 = buf@[2 * 1];
+    console_clear!(con);
+    clr_len = p0@[0];
+    con@[CONSOLE_LENS_STREAM_BUF] = 0;
+    exocall!(arena, EXOCALL_PMM_FREE, p0, 1, 0, 0);
+    p1 = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, p1, 1, 0, 0);
+
+    if ((cap_len != 3) | (b0 != 56) | (b1 != 54) | (b2 != 241) | (clr_len != 0) | (p1 != p0)) [
+        ret 45;
+    ]
+    ret 0;
+]
+
+fn test_sagr_raster!(arena) [
+    bi = arena@[ARENA_LENS_BOOT_INFO];
+    pmm = arena@[ARENA_LENS_PMM];
+    font_ptr = bi@[BOOT_LENS_FONT_BASE];
+    if ((font_ptr == 0) | (pmm == 0)) [ ret 46; ]
+    free0 = pmm@[PMM_LENS_FREE_PAGES];
+
+    // Allocate synthetic 69x20 surface (stride=304 > 69*4=276; odd width + clipped right/bottom tiles)
+    ctrl      = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    ring      = exocall!(arena, EXOCALL_PMM_ALLOC, SAGR_CMD_RING_PAGES, 0, 0, 0);
+    tile_mask = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    front_fb  = exocall!(arena, EXOCALL_PMM_ALLOC, 2, 0, 0, 0);
+    back_fb   = exocall!(arena, EXOCALL_PMM_ALLOC, 2, 0, 0, 0);
+    scratch   = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if ((ctrl == 0) | (ring == 0) | (tile_mask == 0) | (front_fb == 0) | (back_fb == 0) | (scratch == 0)) [
+        ret 46;
+    ]
+
+    sentinel = 1234605616436508552; // 0x1122334455667788
+    loop (i:1024 = 0 .. 1024) [
+        front_fb@[i] = sentinel;
+        back_fb@[i]  = sentinel;
+    ]
+    tile_clear_all!(tile_mask);
+
+    sagr_ring_init!(ctrl, ring);
+    ctrl@[DISP_LENS_FRONT_FB] = front_fb;
+    ctrl@[DISP_LENS_BACK_FB]  = back_fb;
+    ctrl@[DISP_LENS_WIDTH]    = 69;
+    ctrl@[DISP_LENS_HEIGHT]   = 20;
+    ctrl@[DISP_LENS_STRIDE]   = 304;
+
+    out_cmd = scratch;
+    str_buf = scratch + 64;
+    str_buf@[0] = 0; // 'A' (TRG 0)
+    src_surf = scratch + 128;
+    src_col = 11259375; // 0x00ABCDEF
+    src_surf@[0] = (src_col << 32) | src_col;
+    src_surf@[1] = (src_col << 32) | src_col;
+
+    err = 0;
+    // Batch 1: 150 DAMAGE_RECT commands -> drained incrementally before Batch 2
+    loop (b1:150 = 0 .. 150) [
+        if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_DAMAGE_RECT, 0, 0, 0), sagr_pack_ext(16, 16, 0), 0, 0) != 0) [
+            err = 46;
+        ]
+    ]
+    d1 = sagr_drain_ring!(ctrl, font_ptr, tile_mask, out_cmd);
+    if (d1 != 150) [ err = 46; ]
+
+    // Batch 2 (> 256 cumulative across ring wrap): fill 69x20, bordered rect, negative-x clip, blit, glyph, damage, commit
+    loop (b2:150 = 0 .. 150) [
+        if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_DAMAGE_RECT, 0, 64, 16), sagr_pack_ext(5, 4, 0), 0, 0) != 0) [
+            err = 47;
+        ]
+    ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_RECT, 0, 0, 0), sagr_pack_ext(69, 20, 1122867), 0, 0) != 0) [ err = 47; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_BORDER, 2, 2), sagr_pack_ext(10, 6, 2236962), 16777215 | (1 << 32), 0) != 0) [ err = 47; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_RECT, 0, -2, -1), sagr_pack_ext(6, 4, 4478310), 0, 0) != 0) [ err = 47; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_BLIT_SURFACE, 0, 67, 18), sagr_pack_ext(2, 2, 8), src_surf, 0) != 0) [ err = 47; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, SAGR_FLAG_OPAQUE_BG, 16, 0), sagr_pack_ext(1, 1, 16777215), str_buf, 1122867) != 0) [ err = 47; ]
+    if (sagr_ring_push!(ctrl, sagr_pack_hdr(SAGR_CMD_COMMIT, 0, 0, 0), 0, 99, 0) != 0) [ err = 47; ]
+
+    d2 = sagr_drain_ring!(ctrl, font_ptr, tile_mask, out_cmd);
+    if ((d2 != 156) | (ctrl@[DISP_LENS_CMD_DROPPED] != 0) | (ctrl@[DISP_LENS_FRAME_SEQ] != 99)) [
+        err = 48;
+    ]
+
+    // Verify front_fb interior, odd right edge (x=68), bottom-right blit (68, 19), glyph 'A', and untouched stride/height sentinels
+    px_0_0   = front_fb@[0] & 4294967295;               // 0x00445566 (4478310) from clipped (-2,-1,6,4)
+    px_4_2   = front_fb@[((2 * 304 + 16) >> 3)] & 4294967295; // border 16777215 at x=4, y=2 (outside clipped Rec 3)
+    px_68_0  = front_fb@[((0 * 304 + 68 * 4) >> 3)] & 4294967295; // odd right pixel x=68: 1122867
+    pad_0    = front_fb@[((0 * 304 + 276) >> 3)];        // first u64 padding after 69 px: top 32 bits must remain 0x11223344
+    px_68_19 = front_fb@[((19 * 304 + 68 * 4) >> 3)] & 4294967295; // blit at (67..68, 18..19): src_col (11259375)
+    row20    = front_fb@[((20 * 304) >> 3)];             // below height=20 must stay sentinel
+    if (px_0_0 != 4478310) [ err = 51; ]
+    if (px_4_2 != 16777215) [ err = 52; ]
+    if (px_68_0 != 1122867) [ err = 53; ]
+    if (px_68_19 != src_col) [ err = 54; ]
+    if (row20 != sentinel) [ err = 55; ]
+    if (((pad_0 >> 32) & 4294967295) != ((sentinel >> 32) & 4294967295)) [ err = 56; ]
+    // Verify 'A' glyph foreground pixel rendered cleanly at (16..23, 0..15) onto front_fb
+    has_fg = 0;
+    loop (gy:16 = 0 .. 16) [
+        q = front_fb@[((gy * 304 + 16 * 4) >> 3)];
+        p0 = q & 4294967295;
+        p1 = (q >> 32) & 4294967295;
+        if ((p0 == 16777215) | (p1 == 16777215)) [ has_fg = 1; ]
+    ]
+    if ((has_fg == 0) | (tile_is_dirty(tile_mask, 0) != 0) | (tile_is_dirty(tile_mask, 9) != 0)) [
+        err = 50;
+    ]
+
+    exocall!(arena, EXOCALL_PMM_FREE, ctrl, 1, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, ring, SAGR_CMD_RING_PAGES, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, tile_mask, 1, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, front_fb, 2, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, back_fb, 2, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, scratch, 1, 0, 0);
+    if (err != 0) [ ret err; ]
+
+    if (pmm@[PMM_LENS_FREE_PAGES] != free0) [ ret 50; ]
+    ret 0;
+]
+
+fn test_niri_layout!(arena) [
+    pmm = arena@[ARENA_LENS_PMM];
+    if (pmm == 0) [ ret 57; ]
+    free0 = pmm@[PMM_LENS_FREE_PAGES];
+
+    wm       = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    cols_ptr = exocall!(arena, EXOCALL_PMM_ALLOC, 2, 0, 0, 0);
+    xywh     = exocall!(arena, EXOCALL_PMM_ALLOC, 1, 0, 0, 0);
+    if ((wm == 0) | (cols_ptr == 0) | (xywh == 0)) [ ret 57; ]
+
+    loop (i:512 = 0 .. 512) [ wm@[i] = 0; xywh@[i] = 0; ]
+    loop (j:1024 = 0 .. 1024) [ cols_ptr@[j] = 0; ]
+
+    sw = 1280;
+    sh = 800;
+    err = 0;
+
+    // 1. Insert 4 columns of width_mode=1 (1/2 screen = 628 px -> 4 cols push target_scroll_x > 1280)
+    if (niri_insert_col!(wm, cols_ptr, 0, -1, 10, 1, sw) != 0) [ err = 57; ]
+    if (niri_insert_col!(wm, cols_ptr, 0, 0,  11, 1, sw) != 1) [ err = 57; ]
+    if (niri_insert_col!(wm, cols_ptr, 0, 1,  12, 1, sw) != 2) [ err = 57; ]
+    if (niri_insert_col!(wm, cols_ptr, 0, 2,  13, 1, sw) != 3) [ err = 57; ]
+
+    wbase = niri_ws_off(0);
+    tgt = wm@[(wbase + WS_LENS_TARGET_X)];
+    if ((wm@[(wbase + WS_LENS_COL_CNT)] != 4) | (wm@[(wbase + WS_LENS_FOCUS_C)] != 3) | (!(tgt > 0))) [
+        err = 58;
+    ]
+
+    // 2. Step TSC camera easing until settled -> verify exact snap and 0 on settled tick
+    steps = 0;
+    loop (s:32 = 0 .. 32) [
+        if (niri_step_camera!(wm, 0) != 0) [
+            steps = steps + 1;
+        ]
+    ]
+    scroll_x = wm@[(wbase + WS_LENS_SCROLL_X)];
+    if ((steps < 2) | (scroll_x != tgt) | (niri_step_camera!(wm, 0) != 0)) [
+        err = 58;
+    ]
+
+    // Verify off-screen culling: col 0 must be culled when viewing col 3, col 3 visible
+    c0x = cols_ptr@[(niri_col_off(0, 0) + COL_LENS_X)];
+    c0w = cols_ptr@[(niri_col_off(0, 0) + COL_LENS_W)];
+    c3x = cols_ptr@[(niri_col_off(0, 3) + COL_LENS_X)];
+    c3w = cols_ptr@[(niri_col_off(0, 3) + COL_LENS_W)];
+    if ((niri_is_col_visible(c0x, c0w, scroll_x, sw) != 0) | (niri_is_col_visible(c3x, c3w, scroll_x, sw) == 0)) [
+        err = 59;
+    ]
+
+    // 3. Consume right, check stacked rect math, expel, move, remove all cleanly
+    niri_focus_col!(wm, cols_ptr, 0, -1, sw); // focus col 2
+    if (niri_consume_right!(wm, cols_ptr, 0, sw) != 1) [ err = 60; ]
+    coff2 = niri_col_off(0, 2);
+    if ((wm@[(wbase + WS_LENS_COL_CNT)] != 3) | (cols_ptr@[(coff2 + COL_LENS_PANE_CNT)] != 2)) [
+        err = 60;
+    ]
+    niri_pane_rect!(cols_ptr, 0, 2, 0, wm@[(wbase + WS_LENS_SCROLL_X)], sh, xywh);
+    y0 = xywh@[1]; h0 = xywh@[3];
+    niri_pane_rect!(cols_ptr, 0, 2, 1, wm@[(wbase + WS_LENS_SCROLL_X)], sh, xywh);
+    y1 = xywh@[1]; h1 = xywh@[3];
+    if ((y1 != (y0 + h0 + SAGR_GAP)) | ((y1 + h1) != (sh - SAGR_GAP))) [
+        err = 60;
+    ]
+
+    // Expel back to 4 columns & remove all cleanly
+    if (niri_expel_focused!(wm, cols_ptr, 0, sw) != 1) [ err = 61; ]
+    if (niri_move_col!(wm, cols_ptr, 0, -1, sw) != 1) [ err = 61; ]
+    loop (rm:4 = 0 .. 4) [
+        niri_remove_pane!(wm, cols_ptr, 0, 0, 0, sw);
+    ]
+    if (wm@[(wbase + WS_LENS_COL_CNT)] != 0) [ err = 61; ]
+
+    exocall!(arena, EXOCALL_PMM_FREE, wm, 1, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, cols_ptr, 2, 0, 0);
+    exocall!(arena, EXOCALL_PMM_FREE, xywh, 1, 0, 0);
+    if (err != 0) [ ret err; ]
+    if (pmm@[PMM_LENS_FREE_PAGES] != free0) [ ret 62; ]
+    ret 0;
+]
+
 fn test_bootinfo!(arena) [
     bi = arena@[ARENA_LENS_BOOT_INFO];
     if (bi == 0) [
@@ -904,6 +1172,17 @@ fn main!(arena) [
     ]
     if (test_display_abi!(arena) != 0) [
         ret 39;
+    ]
+    if (test_gui_phase1!(arena) != 0) [
+        ret 43;
+    ]
+    r_sagr = test_sagr_raster!(arena);
+    if (r_sagr != 0) [
+        ret r_sagr;
+    ]
+    r_niri = test_niri_layout!(arena);
+    if (r_niri != 0) [
+        ret r_niri;
     ]
 
     ret 0;

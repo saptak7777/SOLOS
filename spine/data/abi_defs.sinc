@@ -18,6 +18,7 @@ const ARENA_LENS_META_BUF  = 10;
 const ARENA_LENS_EXOCALL   = 11;
 const ARENA_LENS_BOOT_INFO = 12;
 const ARENA_LENS_XHCI      = 13;
+const ARENA_LENS_DISPLAY   = 14;
 
 // Kernel Exocall Opcodes
 const EXOCALL_GET_FN_ADDR   = 0;

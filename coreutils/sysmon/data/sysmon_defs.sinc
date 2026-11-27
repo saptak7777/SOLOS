@@ -1,0 +1,30 @@
+// ==========================================
+// coreutils/sysmon/data/sysmon_defs.sinc
+// System Monitor Pane Lenses & Pure TRG Labels (Strict Law 15)
+// ==========================================
+
+const SYSMON_ST_CASE_CNT    = 0;
+const SYSMON_ST_ROW_IDX     = 1;
+const SYSMON_ST_CLIP_RECT   = 2;
+const SYSMON_ST_CLIP_CY     = 3;
+const SYSMON_ST_ROWS_OFF    = 256;    // 32 x 120 B immutable line buffers inside 1 PMM page
+
+const SYSMON_COL_BG         = 1381404;
+const SYSMON_COL_CYAN       = 10980346;
+const SYSMON_COL_GREEN      = 10011513;
+const SYSMON_COL_GOLD       = 15056027;
+const SYSMON_COL_WHITE      = 15593972;
+
+const STR_SYSMON_TITLE      = 14353983215634;       // "SYSMON"
+const STR_HDR_0             = 932258334505048082;   // "SYSTEM M"
+const STR_HDR_1             = 18752146509070;       // "ONITOR"
+const STR_PMM_PG_0          = -1082264619930874865; // "PMM PG: "
+const STR_SLASH_0           = 15758320;             // " / "
+const STR_MB_FREE_0         = -1151791133539434228; // "MB FREE "
+const STR_CASE_CNT_0        = -354924621120536574;  // "CASE NT:"
+const STR_DISP_0            = -1085102549115992061; // "DISP:   "
+const STR_SEQ_0             = 1078305493744;        // " SEQ:"
+const STR_HID_0             = -359434715075112428;  // "USB HID:"
+const STR_LIT_ACT_0         = -354937742581102581;  // "LIT ACT:"
+const STR_SLOT_PFX_0        = 263964630651632;      // " SLOT "
+const STR_PGS_EQ_0          = 7671792;              // " P="

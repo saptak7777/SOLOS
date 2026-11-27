@@ -1,0 +1,131 @@
+// ==========================================
+// sagr/data/sagr_defs.sinc
+// SAGR Micro-Tile Geometry, Palette, Niri WM State & TRG Labels (Strict Law 15)
+// ==========================================
+
+const SAGR_TILE_SIZE        = 16;
+const SAGR_TILE_SHIFT       = 4;
+const SAGR_MAX_TILE_WORDS   = 512;    // 512 QWORDs (1 PMM page) = 32,768 tiles >= 4K (240x135)
+
+// Extra SAGR_CMD_RECT Flags (Low 16 bits in qw0)
+const SAGR_FLAG_BORDER      = 4;      // SAGR_CMD_RECT: qw2[31:0]=border_col, qw2[39:32]=border_px
+
+// Modern Slate-Noir / Violet Palette (BGRA8 32-bit values)
+const SAGR_COL_DESKTOP_BG   = 723728;   // 0x000B0B10: Deep Obsidian Noir
+const SAGR_COL_BAR_BG       = 1184024;  // 0x00121118: Carbon Top Status Bar
+const SAGR_COL_PILL_BG      = 1907494;  // 0x001D1B26: Subtle Dark Status Pill
+const SAGR_COL_PANE_BG      = 1381404;  // 0x0015141C: Neutral Graphite Pane
+const SAGR_COL_TITLE_FOCUS  = 2826562;  // 0x002B2142: Rich Violet Focused Titlebar
+const SAGR_COL_TITLE_IDLE   = 1776162;  // 0x001B1A22: Muted Graphite Idle Titlebar
+const SAGR_COL_BORDER_FOCUS = 10980346; // 0x00A78BFA: Modern Violet Focus Border
+const SAGR_COL_BORDER_DIM   = 3025979;  // 0x002E2C3B: Subtle Charcoal Border
+const SAGR_COL_TEXT_MAIN    = 15593972; // 0x00EDF2F4: Crisp Light Text
+const SAGR_COL_TEXT_DIM     = 9342112;  // 0x008E8CA0: Dimmed Secondary Text
+const SAGR_COL_ACCENT_GREEN = 10011513; // 0x0098C379: Emerald Green
+const SAGR_COL_ACCENT_GOLD  = 15056027; // 0x00E5C07B: Gold Accent
+const SAGR_COL_ACCENT_RED   = 14707573; // 0x00E06C75: Alert Coral
+
+// Compositor Layout Geometry (Pixels)
+const SAGR_BAR_H            = 28;
+const SAGR_GAP              = 8;
+const SAGR_BORDER_PX        = 2;
+const SAGR_TITLE_H          = 22;
+
+// Niri Strip Limits & Modes
+const SAGR_MAX_WS           = 4;
+const SAGR_MAX_COLS         = 16;
+const SAGR_MAX_PANES_COL    = 3;
+const SAGR_MAX_PANES        = 64;
+const SAGR_COL_MODE_STACK   = 0;
+const SAGR_COL_MODE_TAB     = 1;
+
+// Pane Kinds
+const SAGR_KIND_PREVIEW     = 0;
+const SAGR_KIND_SHELL       = 1;
+const SAGR_KIND_SYSMON      = 2;
+
+// WM State Page QWORD Lenses (1 PMM page = 512 QWORDs)
+const WM_CUR_WS             = 0;
+const WM_FRAME_SEQ          = 1;
+const WM_RUNNING            = 2;
+const WM_EXIT_CODE          = 3;
+const WM_ANIMATING          = 4;
+const WM_DIRTY              = 5;
+const WM_LIVE_MODE          = 6;
+const WM_COLS_PTR           = 7;
+const WM_PANES_PTR          = 8;
+const WM_TILE_MASK          = 9;
+const WM_CMD_TMP            = 10;     // 4 QWORD scratch [10..13]
+const WM_PANE_PKT           = 16;     // 6 QWORD PANE_PKT [16..21]
+const WM_RECT_TMP           = 24;     // 6 QWORD rect+meta scratch [24..29]
+const WM_STR_BUF            = 32;     // 128 B TRG buffer [32..47]
+const WM_WS_BASE            = 64;     // 4 workspaces x 8 QWORDs [64..95]
+const WM_WS_STRIDE          = 8;
+
+const WS_LENS_COL_CNT       = 0;
+const WS_LENS_FOCUS_C       = 1;
+const WS_LENS_SCROLL_X      = 2;
+const WS_LENS_TARGET_X      = 3;
+
+// Column Pool Lenses (cols_ptr: 2 PMM pages = 64 cols x 16 QWORDs)
+const WM_COL_STRIDE         = 16;
+const COL_LENS_PANE_CNT     = 0;
+const COL_LENS_FOCUS_P      = 1;
+const COL_LENS_WIDTH_MOD    = 2;      // 0=1/3, 1=1/2, 2=2/3, 3=1/1
+const COL_LENS_TAB_MODE     = 3;      // 0=stack, 1=tabbed
+const COL_LENS_X            = 4;
+const COL_LENS_W            = 5;
+const COL_LENS_PANE_BASE    = 8;      // + 0, 1, 2 -> pane_id 0..63
+
+// Pane Pool Lenses (panes_ptr: 1 PMM page = 64 panes x 8 QWORDs)
+const WM_PANE_STRIDE        = 8;
+const PANE_LENS_USED        = 0;
+const PANE_LENS_KIND        = 1;
+const PANE_LENS_SLOT        = 2;
+const PANE_LENS_STATE       = 3;
+const PANE_LENS_TITLE       = 4;
+
+// Keymap Modifiers & TRG Key Slots
+const MOD_ANY_ALT           = 68;     // MOD_LALT(4) | MOD_RALT(64)
+const KEY_TRG_LOWER_H       = 33;
+const KEY_TRG_LOWER_I       = 34;
+const KEY_TRG_LOWER_J       = 35;
+const KEY_TRG_LOWER_K       = 36;
+const KEY_TRG_LOWER_L       = 37;
+const KEY_TRG_LOWER_O       = 40;
+const KEY_TRG_LOWER_Q       = 42;
+const KEY_TRG_LOWER_R       = 43;
+const KEY_TRG_LOWER_S       = 44;
+const KEY_TRG_LOWER_T       = 45;
+const KEY_TRG_UPPER_H       = 7;
+const KEY_TRG_UPPER_L       = 11;
+const KEY_TRG_UPPER_Q       = 16;
+const KEY_TRG_1             = 53;
+const KEY_TRG_2             = 54;
+const KEY_TRG_3             = 55;
+const KEY_TRG_4             = 56;
+
+// Pure TRG Status & Label QWORDs
+const STR_SAGR_BRAND        = 1031077756946;        // "SAGR " (len 5)
+const STR_SAGR_WS           = 15733270;             // "WS " (len 3)
+const STR_SAGR_COL          = 4027256322;           // "COL " (len 4)
+const STR_SAGR_STACK        = 42983232274;          // "STACK" (len 5)
+const STR_SAGR_TAB          = 65555;                // "TAB" (len 3)
+const STR_SAGR_W_1_3        = 3633973;              // "1/3" (len 3)
+const STR_SAGR_W_1_2        = 3568437;              // "1/2" (len 3)
+const STR_SAGR_W_2_3        = 3633974;              // "2/3" (len 3)
+const STR_SAGR_W_1_1        = 3502901;              // "1/1" (len 3)
+const STR_SAGR_PG           = 16451087;             // "PG:" (len 3)
+const STR_SAGR_SHELL        = 47429453586;          // "SHELL" (len 5)
+const STR_SAGR_SYSMON       = 14353983215634;       // "SYSMON" (len 6)
+const STR_SAGR_PANE         = 67960847;             // "PANE" (len 4)
+const STR_SAGR_NO_PANES     = 1298176886508097037;  // "NO PANES" (len 8)
+const STR_SAGR_HINT_0       = 1370239359680970998;  // "[ALT+RET" (len 8)
+const STR_SAGR_HINT_1       = -1085354242973896457; // "] TERM  " (len 8)
+const STR_SAGR_HINT_2       = -1083376912794189578; // "[ALT+S] " (len 8)
+const STR_SAGR_HINT_3       = -1085353156213073902; // "SYSMON  " (len 8)
+const STR_SAGR_HINT_4       = -1083378012305817354; // "[ALT+R] " (len 8)
+const STR_SAGR_HINT_5       = -652758032794318826;  // "WIDTH  [" (len 8)
+const STR_SAGR_HINT_6       = 1436919943987923712;  // "ALT+T] T" (len 8)
+const STR_SAGR_HINT_7       = 1372191572068663552;  // "AB  [ALT" (len 8)
+const STR_SAGR_HINT_8       = 1371368149529071728;  // "+Q] QUIT" (len 8)

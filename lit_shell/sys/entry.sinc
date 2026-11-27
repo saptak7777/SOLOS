@@ -211,83 +211,199 @@ fn shell_handle_input_evt!(arena, scratch, evt) [
 
     // Enter / Return
     if (trg == TRG_RET) [
+        console@[CONSOLE_LENS_STREAM_BUF] = scratch;
         console_newline!(console);
         shell_execute_line!(arena, scratch, buf_base, line_len);
         scratch@[SCRATCH_LENS_LINE_LEN] = 0;
-        console_print_qword!(console, STR_SHELL_PROMPT_0, 2);
-        console_flush_screen!(console);
+        if (scratch@[SCRATCH_LENS_RUNNING] != 0) [
+            console_print_qword!(console, STR_SHELL_PROMPT_0, 2);
+        ]
+        console@[CONSOLE_LENS_STREAM_BUF] = 0;
         ret 0;
     ]
 
     // Backspace
     if (trg == TRG_BS) [
         if (line_len > 0) [
-            line_len = line_len - 1;
-            scratch@[SCRATCH_LENS_LINE_LEN] = line_len;
-            col = console@[CONSOLE_LENS_COL];
-            if (col > 0) [
-                console@[CONSOLE_LENS_COL] = col - 1;
-                console_putc!(console, TRG_SPC);
-                console@[CONSOLE_LENS_COL] = col - 1;
-                console_flush_screen!(console);
-            ]
+            scratch@[SCRATCH_LENS_LINE_LEN] = line_len - 1;
         ]
         ret 0;
     ]
 
-    // Regular printable character
-    if (line_len < 64) [
+    // Regular printable character (allow 0..232, TRG_SPC=240, and 243..255 punctuation)
+    is_ctrl = ((!(trg < TRG_ESC)) & (trg < TRG_SPC)) | (trg == TRG_RET) | (trg == TRG_TAB);
+    if ((line_len < 64) & (is_ctrl == 0)) [
         buf_base@[line_len * 1] = trg;
         scratch@[SCRATCH_LENS_LINE_LEN] = line_len + 1;
-        console_putc!(console, trg);
-        console_flush_screen!(console);
     ]
     ret 0;
 ]
 
-fn shell_run_repl!(arena, scratch) [
+fn shell_trim_stream!(st) [
+    pos = st@[PANE_ST_STREAM_POS];
+    if (!(pos > 1536)) [ ret 0; ]
+    ptr = st@[PANE_ST_STREAM_PTR];
+    cut = pos - 768;
+    found = 0;
+    loop (i:1024 = 0 .. 768) [
+        if ((found == 0) & ((cut + i) < pos)) [
+            if ((ptr@[(cut + i) * 1] & 255) == TRG_RET) [
+                cut = cut + i + 1;
+                found = 1;
+            ]
+        ]
+    ]
+    rem = pos - cut;
+    loop (k:1536 = 0 .. rem) [
+        ptr@[k * 1] = ptr@[(cut + k) * 1];
+    ]
+    st@[PANE_ST_STREAM_POS] = rem;
+    ret 0;
+]
+
+fn shell_emit_vis_row!(disp_ctrl, st, cx, cy, cur_row, cur_col) [
+    skip_rows = st@[PANE_ST_SKIP_ROWS];
+    max_rows  = st@[PANE_ST_MAX_ROWS];
+    if ((cur_row < skip_rows) | (!((cur_row - skip_rows) < max_rows)) | (cur_col < 1)) [
+        ret 0;
+    ]
+    vis  = cur_row - skip_rows;
+    rbuf = st + PANE_ST_ROWS_OFF + (vis << 7);
+    rect = st@[PANE_ST_CLIP_RECT];
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_GLYPH_RUN, SAGR_FLAG_CLIP, cx + 6, cy + 4 + (vis << 4)), sagr_pack_ext(cur_col, 1, PANE_ST_COL_FG), rbuf, rect);
+    ret 0;
+]
+
+fn shell_walk_lines!(arena, st, cx, cy, max_cols, do_emit) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    pos       = st@[PANE_ST_STREAM_POS];
+    text_buf  = st@[PANE_ST_STREAM_PTR];
+    line_len  = st@[SCRATCH_LENS_LINE_LEN];
+    line_buf  = st + (SCRATCH_LENS_LINE_BUF << 3);
+    skip_rows = st@[PANE_ST_SKIP_ROWS];
+    max_rows  = st@[PANE_ST_MAX_ROWS];
+    rect      = st@[PANE_ST_CLIP_RECT];
+    total     = pos + line_len;
+    if (total > 4096) [ total = 4096; ]
+
+    cur_row = 0;
+    cur_col = 0;
+    loop (idx:4096 = 0 .. total) [
+        ch = 0;
+        if (idx < pos) [ ch = text_buf@[idx * 1] & 255; ]
+        if (!(idx < pos)) [ ch = line_buf@[(idx - pos) * 1] & 255; ]
+        if (ch == TRG_RET) [
+            if (do_emit != 0) [ shell_emit_vis_row!(disp_ctrl, st, cx, cy, cur_row, cur_col); ]
+            cur_row = cur_row + 1;
+            cur_col = 0;
+        ]
+        if (ch != TRG_RET) [
+            if (!(cur_col < max_cols)) [
+                if (do_emit != 0) [ shell_emit_vis_row!(disp_ctrl, st, cx, cy, cur_row, cur_col); ]
+                cur_row = cur_row + 1;
+                cur_col = 0;
+            ]
+            if (do_emit != 0) [
+                vis = cur_row - skip_rows;
+                if ((!(cur_row < skip_rows)) & (vis < max_rows) & (cur_col < 110)) [
+                    rbuf = st + PANE_ST_ROWS_OFF + (vis << 7);
+                    rbuf@[cur_col * 1] = ch;
+                ]
+            ]
+            cur_col = cur_col + 1;
+        ]
+    ]
+
+    if (do_emit != 0) [
+        shell_emit_vis_row!(disp_ctrl, st, cx, cy, cur_row, cur_col);
+        if (st@[PANE_ST_FOCUSED] != 0) [
+            vis = cur_row - skip_rows;
+            if ((!(cur_row < skip_rows)) & (vis < max_rows)) [
+                sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_CLIP, cx + 6 + (cur_col << 3), cy + 5 + (vis << 4)), sagr_pack_ext(2, 14, PANE_ST_COL_CURSOR), 0, rect);
+            ]
+        ]
+    ]
+    ret cur_row + 1;
+]
+
+fn shell_pane_init!(arena, pkt) [
+    st = exocall!(arena, EXOCALL_PMM_ALLOC, PANE_ST_PAGES, 0, 0, 0);
+    if (st == 0) [ ret 0; ]
+    loop (z:64 = 0 .. 64) [ st@[z] = 0; ]
+    st@[PANE_ST_STREAM_POS]   = 0;
+    st@[PANE_ST_STREAM_CAP]   = PANE_ST_TEXT_CAP;
+    st@[PANE_ST_STREAM_PTR]   = st + PANE_ST_TEXT_OFF;
+    st@[SCRATCH_LENS_RUNNING] = 1;
+    st@[SCRATCH_LENS_LINE_LEN] = 0;
+
     console = arena@[ARENA_LENS_CONSOLE];
-    ring = arena@[ARENA_LENS_RING];
-
-    scratch@[SCRATCH_LENS_LINE_LEN] = 0;
-    scratch@[SCRATCH_LENS_RUNNING] = 1;
-
+    console@[CONSOLE_LENS_STREAM_BUF] = st;
     console_print_qword!(console, STR_SHELL_BANNER_0, 8);
     console_print_qword!(console, STR_SHELL_BANNER_1, 8);
     console_print_qword!(console, STR_SHELL_BANNER_2, 8);
     console_print_qword!(console, STR_SHELL_BANNER_3, 2);
     console_newline!(console);
     console_print_qword!(console, STR_SHELL_PROMPT_0, 2);
-    console_flush_screen!(console);
+    console@[CONSOLE_LENS_STREAM_BUF] = 0;
 
-    loop (step:1000000000 = 0 .. 1000000000) [
-        if (scratch@[SCRATCH_LENS_RUNNING] == 0) [
-            ret 0;
-        ]
-        exocall!(arena, EXOCALL_INPUT_POLL, 0, 0, 0, 0);
-        evt = ring_pop!(ring);
-        if (evt < 0) [
-            exocall!(arena, EXOCALL_SLEEP_US, 10000, 1, 0, 0);
-        ]
-        if (!(evt < 0)) [
-            shell_handle_input_evt!(arena, scratch, evt);
-        ]
-    ]
+    pkt@[PANE_PKT_TITLE] = STR_SHELL_TITLE;
+    ret st;
+]
+
+fn shell_pane_render!(arena, st, pkt) [
+    disp_ctrl = arena@[ARENA_LENS_DISPLAY];
+    rect      = pkt@[PANE_PKT_ARG0];
+    cx        = sagr_sext16(sagr_cmd_x(rect));
+    cy        = sagr_sext16(sagr_cmd_y(rect));
+    cw        = sagr_cmd_w(rect);
+    ch        = sagr_cmd_h(rect);
+    pkt@[PANE_PKT_TITLE] = STR_SHELL_TITLE;
+
+    sagr_ring_push!(disp_ctrl, sagr_pack_hdr(SAGR_CMD_RECT, SAGR_FLAG_CLIP, cx, cy), sagr_pack_ext(cw, ch, PANE_ST_COL_BG), 0, rect);
+    max_cols = (cw - 12) >> 3;
+    if (max_cols < 4)   [ max_cols = 4; ]
+    if (max_cols > 110) [ max_cols = 110; ]
+    max_rows = (ch - 8) >> 4;
+    if (max_rows < 1)  [ max_rows = 1; ]
+    if (max_rows > 40) [ max_rows = 40; ]
+
+    st@[PANE_ST_CLIP_RECT] = rect;
+    st@[PANE_ST_MAX_ROWS]  = max_rows;
+    st@[PANE_ST_FOCUSED]   = pkt@[PANE_PKT_ARG1];
+    st@[PANE_ST_SKIP_ROWS] = 0;
+
+    total_rows = shell_walk_lines!(arena, st, cx, cy, max_cols, 0);
+    skip = total_rows - max_rows;
+    if (skip < 0) [ skip = 0; ]
+    st@[PANE_ST_SKIP_ROWS] = skip;
+    shell_walk_lines!(arena, st, cx, cy, max_cols, 1);
     ret 0;
 ]
 
-fn main!(arena) [
-    test_mode = arena@[ARENA_LENS_TOKEN];
+fn main!(pkt) [
+    if (pkt == 0) [ ret 0; ]
+    op    = pkt@[PANE_PKT_OP];
+    arena = pkt@[PANE_PKT_ARENA];
+    st    = pkt@[PANE_PKT_STATE];
+    if (arena == 0) [ ret 0; ]
 
-    if (test_mode == SHELL_TEST_MODE) [
-        ring = arena@[ARENA_LENS_RING];
-        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, 42, 0, 20));
-        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, 46, 0, 24));
-        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, 34, 0, 12));
-        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, 45, 0, 23));
-        ring_push!(ring, input_evt_pack(EVT_KEY_DOWN, 0, TRG_RET, 0, 40));
+    if (op == PANE_OP_INIT) [
+        ret shell_pane_init!(arena, pkt);
     ]
-
-    scratch = arena@[ARENA_LENS_META_BUF] + 64;
-    ret shell_run_repl!(arena, scratch);
+    if (op == PANE_OP_EVENT) [
+        if (st == 0) [ ret 0; ]
+        shell_handle_input_evt!(arena, st, pkt@[PANE_PKT_ARG0]);
+        shell_trim_stream!(st);
+        if (st@[SCRATCH_LENS_RUNNING] == 0) [ ret 1; ]
+        ret 0;
+    ]
+    if (op == PANE_OP_RENDER) [
+        if (st != 0) [ shell_pane_render!(arena, st, pkt); ]
+        ret 0;
+    ]
+    if (op == PANE_OP_FREE) [
+        if (st != 0) [ exocall!(arena, EXOCALL_PMM_FREE, st, PANE_ST_PAGES, 0, 0); ]
+        ret 0;
+    ]
+    ret 0;
 ]

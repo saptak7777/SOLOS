@@ -12,7 +12,7 @@ fn sagr_pack_ext(a16, b16, c32) [
 ]
 
 fn sagr_pack_clip(x, y, w, h) [
-    ret sagr_pack_hdr(x, y, w, h);
+    ret sagr_pack_hdr(w, h, x, y);
 ]
 
 fn sagr_cmd_op(qw0) [
@@ -87,5 +87,47 @@ fn sagr_ring_pop!(ctrl, out_cmd) [
     out_cmd@[3] = ring@[(base + 3)];
     ctrl@[DISP_LENS_CMD_TAIL] = (tail + 1) & 255;
     ret 0;
+]
+
+fn sagr_sext16(v) [
+    v = v & 65535;
+    if (v > 32767) [
+        v = v - 65536;
+    ]
+    ret v;
+]
+
+fn sagr_buf_push_qw!(buf, len, max_len, qw, qlen) [
+    loop (i:8 = 0 .. qlen) [
+        if (len < max_len) [
+            buf@[len * 1] = (qw >> (i << 3)) & 255;
+            len = len + 1;
+        ]
+    ]
+    ret len;
+]
+
+fn sagr_buf_push_dec!(buf, len, max_len, val) [
+    if (val < 0) [
+        if (len < max_len) [
+            buf@[len * 1] = 113; // '-'
+            len = len + 1;
+        ]
+        val = 0 - val;
+    ]
+    p = 1000000000;
+    started = 0;
+    rem = val;
+    loop (k:10 = 0 .. 10) [
+        d = rem / p;
+        if ((d > 0) | (k == 9)) [ started = 1; ]
+        if ((started != 0) & (len < max_len)) [
+            buf@[len * 1] = 52 + d;
+            len = len + 1;
+        ]
+        rem = rem - (d * p);
+        p = p / 10;
+    ]
+    ret len;
 ]
 

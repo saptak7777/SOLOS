@@ -77,6 +77,7 @@ const STR_SHARK_V0            = 3760488139903207186;  // "SHARK v0" (len 8)
 const STR_BOOT_PREFIX         = -643154868458557200;  // "  [BOOT]" (len 8)
 
 // Milestone 7: Linear Exchange Arena & Sovereign Cell Lenses
+const DISP_BSS_OFFSET      = 28480; // bss_base + 0x6F40 (64-byte aligned, 128 B DisplayControl)
 const ARENA_BSS_OFFSET     = 28672; // bss_base + 0x7000 (64-byte aligned)
 
 // Phase 4A/4B: Bare-Metal LIT Constants & Errors

@@ -5,11 +5,26 @@
 
 const SHELL_TEST_MODE          = 1;
 
-// Scratch Buffer Lenses (arena@[ARENA_LENS_META_BUF] + 64)
-const SCRATCH_LENS_SHIFT_STATE = 0;
-const SCRATCH_LENS_LINE_LEN    = 1;
-const SCRATCH_LENS_RUNNING     = 2;
-const SCRATCH_LENS_LINE_BUF    = 4;
+// Scratch / Pane State Lenses (2 contiguous PMM pages: [0..2]=CONSOLE_LENS_STREAM_BUF hdr)
+const PANE_ST_STREAM_POS       = 0;
+const PANE_ST_STREAM_CAP       = 1;
+const PANE_ST_STREAM_PTR       = 2;
+const SCRATCH_LENS_RUNNING     = 3;
+const SCRATCH_LENS_LINE_LEN    = 4;
+const PANE_ST_CLIP_RECT        = 24;
+const PANE_ST_SKIP_ROWS        = 25;
+const PANE_ST_MAX_ROWS         = 26;
+const PANE_ST_FOCUSED          = 27;
+const SCRATCH_LENS_LINE_BUF    = 8;     // 16 QWORDs [8..23] (128 B line buffer)
+
+const PANE_ST_PAGES            = 2;
+const PANE_ST_TEXT_CAP         = 2048;
+const PANE_ST_TEXT_OFF         = 512;
+const PANE_ST_ROWS_OFF         = 2560;
+const PANE_ST_COL_BG           = 1381404;
+const PANE_ST_COL_FG           = 15593972;
+const PANE_ST_COL_CURSOR       = 10980346;
+const STR_SHELL_TITLE          = 47429453586;      // "SHELL"
 
 // Command IDs
 const CMD_UNKNOWN              = 0;

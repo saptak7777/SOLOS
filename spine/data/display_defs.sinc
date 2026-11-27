@@ -49,3 +49,17 @@ const SAGR_CMD_COMMIT         = 5; // qw0=[op:16|surface_id:16|flags:32], qw2=fr
 const SAGR_FLAG_OPAQUE_BG     = 1;
 const SAGR_FLAG_CLIP          = 2;
 
+// Cooperative LIT Pane ABI (EXOCALL_SLOT_CALL(pane_slot, pkt))
+// All apps and sagr.safe share this packet contract (Law 12).
+const PANE_OP_INIT            = 0; // returns state_ptr (>0) or 0 on error
+const PANE_OP_EVENT           = 1; // arg0 = 64-bit InputEvent
+const PANE_OP_RENDER          = 2; // arg0 = [x:16 | y:16 | w:16 | h:16], arg1 = focused
+const PANE_OP_FREE            = 3; // free pane PMM state
+
+const PANE_PKT_OP             = 0;
+const PANE_PKT_ARENA          = 1;
+const PANE_PKT_STATE          = 2;
+const PANE_PKT_ARG0           = 3;
+const PANE_PKT_ARG1           = 4;
+const PANE_PKT_TITLE          = 5; // 8-byte packed TRG pane title output
+

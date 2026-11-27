@@ -178,8 +178,23 @@ fn kernel_main!(boot_info) [
     xhci_bdf = (cpu_caps >> 8) & 65535;
     xhci = xhci_init!(xhci_bar, xhci_bdf, pmm, ring_ptr, tsc_khz);
 
-    // 7. Pack Linear Arena Exchange Table
+    // 7. Pack Linear Arena Exchange Table & Pre-Baseline SAGR DisplayControl
     cr3_base = paging_get_cr3_base!();
+    if (paging_set_wc!(cr3_base, fb_base, fb_bytes, pmm) != 0) [
+        ret kernel_halt_err!(ERR_CONSOLE_OOM);
+    ]
+    cmd_ring = pmm_alloc_contiguous!(pmm, SAGR_CMD_RING_PAGES);
+    if (cmd_ring == 0) [
+        ret kernel_halt_err!(ERR_CONSOLE_OOM);
+    ]
+    disp_ctrl = bss_base + DISP_BSS_OFFSET;
+    sagr_ring_init!(disp_ctrl, cmd_ring);
+    disp_ctrl@[DISP_LENS_FRONT_FB] = fb_base;
+    disp_ctrl@[DISP_LENS_BACK_FB]  = backbuffer;
+    disp_ctrl@[DISP_LENS_WIDTH]    = width;
+    disp_ctrl@[DISP_LENS_HEIGHT]   = height;
+    disp_ctrl@[DISP_LENS_STRIDE]   = stride;
+
     table = bss_base + LIT_TABLE_BSS_OFFSET;
     meta_buf = bss_base + 32768;
     arena_ptr = bss_base + ARENA_BSS_OFFSET;
@@ -199,6 +214,7 @@ fn kernel_main!(boot_info) [
     arena_ptr@[ARENA_LENS_EXOCALL]   = dispatch_fn;
     arena_ptr@[ARENA_LENS_BOOT_INFO] = boot_info;
     arena_ptr@[ARENA_LENS_XHCI]      = xhci;
+    arena_ptr@[ARENA_LENS_DISPLAY]   = disp_ctrl;
 
     loop (cl:256 = 0 .. 256) [
         table@[cl] = 0;

@@ -26,4 +26,6 @@
 *.swo
 .vscode/
 .kilo/
+__pycache__/
+*.pyc
 

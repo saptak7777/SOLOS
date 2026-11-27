@@ -235,7 +235,7 @@ fn pmm_alloc_contiguous!(pmm, count) [
                         ]
                         run_len = run_len + 1;
                         if (run_len == count) [
-                            loop (k:4096 = 0 .. count) [
+                            loop (k:16384 = 0 .. count) [
                                 alloc_p = run_start + k;
                                 aw_idx = alloc_p >> 6;
                                 ab_idx = alloc_p & 63;

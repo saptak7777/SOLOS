@@ -1,0 +1,12 @@
+// ==========================================
+// sagr/sys/entry.sinc
+// Sovereign SAGR Linear-Streaming Niri Compositor Entry Point (Strict Law 15)
+// ==========================================
+
+fn main!(arena) [
+    if (arena == 0) [
+        ret 1;
+    ]
+    ret sagr_run_compositor!(arena);
+]
+

@@ -33,7 +33,12 @@ deps [
     shark/pure/math.sinc;
     shark/pure/hid_trg.sinc;
     shark/sys/cap.sinc;
+    shark/sys/console.sinc;
     shark/sys/ring.sinc;
+    sagr/data/sagr_defs.sinc;
+    sagr/pure/tiles.sinc;
+    sagr/pure/niri_layout.sinc;
+    sagr/sys/raster.sinc;
 ]
 
 flags [

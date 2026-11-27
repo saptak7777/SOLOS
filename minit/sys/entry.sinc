@@ -24,15 +24,15 @@ fn main!(arena) [
     secs_self = ext_buf@[CASE_EXT_PAGES] << 3;
     hash_self = ext_buf@[CASE_EXT_HASH];
 
-    if (case_find_artifact!(arena, FILE_LIT_SHELL_SAFE_0, FILE_LIT_SHELL_SAFE_1, ext_buf) != 0) [
+    if (case_find_artifact!(arena, FILE_SAGR_SAFE_0, FILE_SAGR_SAFE_1, ext_buf) != 0) [
         ret 11;
     ]
     if (case_entry_type(ext_buf@[CASE_EXT_META]) != CASE_TYPE_SAFE) [
         ret 11;
     ]
-    lba_shell  = ext_buf@[CASE_EXT_PG] << 3;
-    secs_shell = ext_buf@[CASE_EXT_PAGES] << 3;
-    hash_shell = ext_buf@[CASE_EXT_HASH];
+    lba_sagr  = ext_buf@[CASE_EXT_PG] << 3;
+    secs_sagr = ext_buf@[CASE_EXT_PAGES] << 3;
+    hash_sagr = ext_buf@[CASE_EXT_HASH];
 
     base_1 = 1 << 2;
     svc_table@[(base_1 + SVC_LENS_DEPS)]   = 0;
@@ -42,9 +42,9 @@ fn main!(arena) [
 
     base_2 = 2 << 2;
     svc_table@[(base_2 + SVC_LENS_DEPS)]   = 1 << 1;
-    svc_table@[(base_2 + SVC_LENS_EXTENT)] = (lba_shell << 32) | secs_shell;
+    svc_table@[(base_2 + SVC_LENS_EXTENT)] = (lba_sagr << 32) | secs_sagr;
     svc_table@[(base_2 + SVC_LENS_META)]   = SVC_POLICY_CRITICAL;
-    svc_table@[(base_2 + SVC_LENS_TOKEN)]  = hash_shell;
+    svc_table@[(base_2 + SVC_LENS_TOKEN)]  = hash_sagr;
 
     wanted_mask = (1 << 1) | (1 << 2);
     ready_mask = 0;

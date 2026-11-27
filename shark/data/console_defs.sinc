@@ -15,6 +15,7 @@ const CONSOLE_LENS_MAX_COLS   = 8;
 const CONSOLE_LENS_MAX_ROWS   = 9;
 const CONSOLE_LENS_FG         = 10;
 const CONSOLE_LENS_BG         = 11;
+const CONSOLE_LENS_STREAM_BUF = 12; // 0 = direct backbuffer; else &[pos, cap, buf_ptr]
 
 // Standard BGRA8 Colors
 const COLOR_BG                = 1780295;  // 0x001B2A47: Deep Slate Blue

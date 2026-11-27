@@ -1,0 +1,73 @@
+// ==========================================
+// sagr/pure/tiles.sinc
+// Pure 16x16 Micro-Tile Dirty Bitmask Math (Strict Law 15)
+// ==========================================
+
+fn tile_clear_all!(tile_mask) [
+    loop (w:512 = 0 .. SAGR_MAX_TILE_WORDS) [
+        tile_mask@[w] = 0;
+    ]
+    ret 0;
+]
+
+fn tile_set!(tile_mask, tile_idx) [
+    if (tile_idx < 0) [
+        ret 0;
+    ]
+    w_idx = tile_idx >> 6;
+    if (!(w_idx < SAGR_MAX_TILE_WORDS)) [
+        ret 0;
+    ]
+    b_idx = tile_idx & 63;
+    tile_mask@[w_idx] = tile_mask@[w_idx] | (1 << b_idx);
+    ret 0;
+]
+
+fn tile_is_dirty(tile_mask, tile_idx) [
+    if (tile_idx < 0) [
+        ret 0;
+    ]
+    w_idx = tile_idx >> 6;
+    if (!(w_idx < SAGR_MAX_TILE_WORDS)) [
+        ret 0;
+    ]
+    b_idx = tile_idx & 63;
+    ret (tile_mask@[w_idx] >> b_idx) & 1;
+]
+
+fn tile_mark_rect!(tile_mask, width, height, rx, ry, rw, rh) [
+    if ((rw < 1) | (rh < 1) | (width < 1) | (height < 1)) [
+        ret 0;
+    ]
+    x0 = rx;
+    if (x0 < 0) [ x0 = 0; ]
+    y0 = ry;
+    if (y0 < 0) [ y0 = 0; ]
+    x1 = rx + rw;
+    if (x1 > width) [ x1 = width; ]
+    y1 = ry + rh;
+    if (y1 > height) [ y1 = height; ]
+    if ((!(x0 < x1)) | (!(y0 < y1))) [
+        ret 0;
+    ]
+
+    stride_tiles = (width + 15) >> 4;
+    max_ty       = (height + 15) >> 4;
+    tx0          = x0 >> 4;
+    tx1          = (x1 + 15) >> 4;
+    ty0          = y0 >> 4;
+    ty1          = (y1 + 15) >> 4;
+    if (tx1 > stride_tiles) [ tx1 = stride_tiles; ]
+    if (ty1 > max_ty) [ ty1 = max_ty; ]
+    if ((tx1 - tx0) > 256) [ tx1 = tx0 + 256; ]
+    if ((ty1 - ty0) > 256) [ ty1 = ty0 + 256; ]
+
+    loop (ty:256 = ty0 .. ty1) [
+        row_base = ty * stride_tiles;
+        loop (tx:256 = tx0 .. tx1) [
+            tile_set!(tile_mask, row_base + tx);
+        ]
+    ]
+    ret 0;
+]
+

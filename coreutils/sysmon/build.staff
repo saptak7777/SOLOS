@@ -1,0 +1,34 @@
+// ==========================================
+// coreutils/sysmon/build.staff
+// Resident System Monitor Pane Cell Manifest (Strict Law 15)
+// ==========================================
+
+artifact sysmon [
+    target = x86_64_none;
+    type   = bin;
+]
+
+deps [
+    spine/data/boot_defs.sinc;
+    spine/data/abi_defs.sinc;
+    spine/data/display_defs.sinc;
+    spine/pure/display_cmd.sinc;
+    lit/data/lit_defs.sinc;
+    lit/pure/slots.sinc;
+    case/data/case_defs.sinc;
+    case/pure/case.sinc;
+    case/sys/case_read.sinc;
+    shark/data/console_defs.sinc;
+    shark/data/xhci_defs.sinc;
+    coreutils/sysmon/data/sysmon_defs.sinc;
+]
+
+driver [
+    coreutils/sysmon/sys/entry.sinc;
+]
+
+flags [
+    optimize = 3;
+    heap     = 1000000000;
+]
+

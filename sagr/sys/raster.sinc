@@ -1,0 +1,424 @@
+// ==========================================
+// sagr/sys/raster.sinc
+// Integer BGRA8 Rasterizer & Clipped 16x16 AVX-512 Flush (Strict Law 15)
+// ==========================================
+
+fn sagr_put_px_back!(row_ptr, x, color32) [
+    c32 = color32 & 4294967295;
+    q_idx = x >> 1;
+    cur = row_ptr@[q_idx];
+    if ((x & 1) == 0) [
+        row_ptr@[q_idx] = (cur & (4294967295 << 32)) | c32;
+        ret 0;
+    ]
+    row_ptr@[q_idx] = (cur & 4294967295) | (c32 << 32);
+    ret 0;
+]
+
+fn sagr_fill_span_back!(row_ptr, x0, count, color32) [
+    if (count < 1) [
+        ret 0;
+    ]
+    c32 = color32 & 4294967295;
+    c64 = (c32 << 32) | c32;
+    cur_x = x0;
+    rem = count;
+
+    if ((cur_x & 1) != 0) [
+        sagr_put_px_back!(row_ptr, cur_x, c32);
+        cur_x = cur_x + 1;
+        rem = rem - 1;
+    ]
+
+    qw_cnt = rem >> 1;
+    if (qw_cnt > 2048) [
+        qw_cnt = 2048;
+    ]
+    qw_start = cur_x >> 1;
+    loop (q:2048 = 0 .. qw_cnt) [
+        row_ptr@[(qw_start + q)] = c64;
+    ]
+
+    if ((rem & 1) != 0) [
+        sagr_put_px_back!(row_ptr, cur_x + (qw_cnt << 1), c32);
+    ]
+    ret 0;
+]
+
+fn sagr_raster_rect!(disp_ctrl, tile_mask, cmd) [
+    back_fb = disp_ctrl@[DISP_LENS_BACK_FB];
+    width   = disp_ctrl@[DISP_LENS_WIDTH];
+    height  = disp_ctrl@[DISP_LENS_HEIGHT];
+    stride  = disp_ctrl@[DISP_LENS_STRIDE];
+    if ((back_fb == 0) | (width < 1) | (height < 1)) [
+        ret 0;
+    ]
+
+    qw0   = cmd@[0];
+    qw1   = cmd@[1];
+    qw2   = cmd@[2];
+    qw3   = cmd@[3];
+    flags = sagr_cmd_flags(qw0);
+    rx    = sagr_sext16(sagr_cmd_x(qw0));
+    ry    = sagr_sext16(sagr_cmd_y(qw0));
+    rw    = sagr_cmd_w(qw1);
+    rh    = sagr_cmd_h(qw1);
+    col   = sagr_cmd_u32(qw1);
+
+    cx0 = 0; cy0 = 0; cx1 = width; cy1 = height;
+    if ((flags & SAGR_FLAG_CLIP) != 0) [
+        tcx0 = sagr_sext16(sagr_cmd_x(qw3));
+        tcy0 = sagr_sext16(sagr_cmd_y(qw3));
+        tcw  = sagr_cmd_w(qw3);
+        tch  = sagr_cmd_h(qw3);
+        tcx1 = tcx0 + tcw;
+        tcy1 = tcy0 + tch;
+        if (tcx0 > cx0) [ cx0 = tcx0; ]
+        if (tcy0 > cy0) [ cy0 = tcy0; ]
+        if (tcx1 < cx1) [ cx1 = tcx1; ]
+        if (tcy1 < cy1) [ cy1 = tcy1; ]
+    ]
+
+    x0 = rx; if (x0 < cx0) [ x0 = cx0; ]
+    y0 = ry; if (y0 < cy0) [ y0 = cy0; ]
+    x1 = rx + rw; if (x1 > cx1) [ x1 = cx1; ]
+    y1 = ry + rh; if (y1 > cy1) [ y1 = cy1; ]
+    if ((!(x0 < x1)) | (!(y0 < y1))) [
+        ret 0;
+    ]
+
+    span_w = x1 - x0;
+    span_h = y1 - y0;
+    if (span_h > 2160) [
+        span_h = 2160;
+        y1 = y0 + 2160;
+    ]
+
+    b_px  = 0;
+    b_col = 0;
+    if ((flags & SAGR_FLAG_BORDER) != 0) [
+        b_px  = (qw2 >> 32) & 255;
+        b_col = qw2 & 4294967295;
+    ]
+
+    loop (row_off:2160 = 0 .. span_h) [
+        py = y0 + row_off;
+        row_ptr = back_fb + (py * stride);
+        if (b_px == 0) [
+            sagr_fill_span_back!(row_ptr, x0, span_w, col);
+        ]
+        if (b_px != 0) [
+            in_top = py < (ry + b_px);
+            in_bot = !(py < (ry + rh - b_px));
+            if (in_top | in_bot) [
+                sagr_fill_span_back!(row_ptr, x0, span_w, b_col);
+            ]
+            if ((in_top == 0) & (in_bot == 0)) [
+                sagr_fill_span_back!(row_ptr, x0, span_w, col);
+                lx1 = rx + b_px;
+                if (lx1 > x1) [ lx1 = x1; ]
+                if (lx1 > x0) [
+                    sagr_fill_span_back!(row_ptr, x0, lx1 - x0, b_col);
+                ]
+                rx0 = rx + rw - b_px;
+                if (rx0 < x0) [ rx0 = x0; ]
+                if (rx0 < x1) [
+                    sagr_fill_span_back!(row_ptr, rx0, x1 - rx0, b_col);
+                ]
+            ]
+        ]
+    ]
+
+    tile_mark_rect!(tile_mask, width, height, x0, y0, span_w, span_h);
+    ret 0;
+]
+
+fn sagr_raster_blit!(disp_ctrl, tile_mask, cmd) [
+    back_fb = disp_ctrl@[DISP_LENS_BACK_FB];
+    width   = disp_ctrl@[DISP_LENS_WIDTH];
+    height  = disp_ctrl@[DISP_LENS_HEIGHT];
+    stride  = disp_ctrl@[DISP_LENS_STRIDE];
+    qw0     = cmd@[0];
+    qw1     = cmd@[1];
+    src_buf = cmd@[2];
+    src_off = cmd@[3];
+    if ((back_fb == 0) | (src_buf == 0)) [
+        ret 0;
+    ]
+
+    dx0     = sagr_sext16(sagr_cmd_x(qw0));
+    dy0     = sagr_sext16(sagr_cmd_y(qw0));
+    bw      = sagr_cmd_w(qw1);
+    bh      = sagr_cmd_h(qw1);
+    sstride = sagr_cmd_u32(qw1);
+    if ((bw < 1) | (bh < 1) | (sstride < 4)) [
+        ret 0;
+    ]
+
+    x0 = dx0; if (x0 < 0) [ x0 = 0; ]
+    y0 = dy0; if (y0 < 0) [ y0 = 0; ]
+    x1 = dx0 + bw; if (x1 > width) [ x1 = width; ]
+    y1 = dy0 + bh; if (y1 > height) [ y1 = height; ]
+    if ((!(x0 < x1)) | (!(y0 < y1))) [
+        ret 0;
+    ]
+
+    cw = x1 - x0;
+    ch = y1 - y0;
+    if (cw > 4096) [ cw = 4096; ]
+    if (ch > 2160) [ ch = 2160; ]
+    sx_skip = x0 - dx0;
+    sy_skip = y0 - dy0;
+
+    loop (r:2160 = 0 .. ch) [
+        dst_row = back_fb + ((y0 + r) * stride);
+        src_row = src_buf + src_off + ((sy_skip + r) * sstride);
+        if (((x0 & 1) == (sx_skip & 1)) & ((x0 & 1) == 0)) [
+            qw_c = cw >> 1;
+            if (qw_c > 2048) [ qw_c = 2048; ]
+            dx_q = x0 >> 1;
+            sx_q = sx_skip >> 1;
+            loop (k:2048 = 0 .. qw_c) [
+                dst_row@[(dx_q + k)] = src_row@[(sx_q + k)];
+            ]
+            if ((cw & 1) != 0) [
+                ex = cw - 1;
+                sx = sx_skip + ex;
+                px = (src_row@[(sx >> 1)] >> ((sx & 1) << 5)) & 4294967295;
+                sagr_put_px_back!(dst_row, x0 + ex, px);
+            ]
+        ]
+        if (((x0 & 1) != (sx_skip & 1)) | ((x0 & 1) != 0)) [
+            loop (c:4096 = 0 .. cw) [
+                sx = sx_skip + c;
+                px = (src_row@[(sx >> 1)] >> ((sx & 1) << 5)) & 4294967295;
+                sagr_put_px_back!(dst_row, x0 + c, px);
+            ]
+        ]
+    ]
+
+    tile_mark_rect!(tile_mask, width, height, x0, y0, cw, ch);
+    ret 0;
+]
+
+fn sagr_raster_glyph_run!(disp_ctrl, font_ptr, tile_mask, cmd) [
+    back_fb = disp_ctrl@[DISP_LENS_BACK_FB];
+    width   = disp_ctrl@[DISP_LENS_WIDTH];
+    height  = disp_ctrl@[DISP_LENS_HEIGHT];
+    stride  = disp_ctrl@[DISP_LENS_STRIDE];
+    qw0     = cmd@[0];
+    qw1     = cmd@[1];
+    str_ptr = cmd@[2];
+    qw3     = cmd@[3];
+    if ((back_fb == 0) | (font_ptr == 0) | (str_ptr == 0)) [
+        ret 0;
+    ]
+
+    flags   = sagr_cmd_flags(qw0);
+    gx0     = sagr_sext16(sagr_cmd_x(qw0));
+    gy0     = sagr_sext16(sagr_cmd_y(qw0));
+    count   = sagr_cmd_w(qw1);
+    scale   = sagr_cmd_h(qw1);
+    fg_col  = sagr_cmd_u32(qw1);
+    if (count < 1) [ ret 0; ]
+    if (count > 256) [ count = 256; ]
+    if (scale < 1) [ scale = 1; ]
+    if (scale > 2) [ scale = 2; ]
+
+    cx0 = 0; cy0 = 0; cx1 = width; cy1 = height;
+    if ((flags & SAGR_FLAG_CLIP) != 0) [
+        tcx0 = sagr_sext16(sagr_cmd_x(qw3));
+        tcy0 = sagr_sext16(sagr_cmd_y(qw3));
+        tcx1 = tcx0 + sagr_cmd_w(qw3);
+        tcy1 = tcy0 + sagr_cmd_h(qw3);
+        if (tcx0 > cx0) [ cx0 = tcx0; ]
+        if (tcy0 > cy0) [ cy0 = tcy0; ]
+        if (tcx1 < cx1) [ cx1 = tcx1; ]
+        if (tcy1 < cy1) [ cy1 = tcy1; ]
+    ]
+
+    cell_w = 8 * scale;
+    cell_h = 16 * scale;
+    total_w = count * cell_w;
+    if ((!(gx0 + total_w > cx0)) | (!(gx0 < cx1)) | (!(gy0 + cell_h > cy0)) | (!(gy0 < cy1))) [
+        ret 0;
+    ]
+
+    opaque_bg = flags & SAGR_FLAG_OPAQUE_BG;
+    bg_col = SAGR_COL_PANE_BG;
+    if ((opaque_bg != 0) & ((flags & SAGR_FLAG_CLIP) == 0) & (qw3 != 0)) [
+        bg_col = qw3 & 4294967295;
+    ]
+
+    y_start = gy0; if (y_start < cy0) [ y_start = cy0; ]
+    y_end   = gy0 + cell_h; if (y_end > cy1) [ y_end = cy1; ]
+
+    loop (ci:256 = 0 .. count) [
+        ch_x0 = gx0 + (ci * cell_w);
+        if ((ch_x0 + cell_w > cx0) & (ch_x0 < cx1)) [
+            trg = str_ptr@[ci * 1] & 255;
+            glyph_base = font_ptr + (trg << 4);
+            fast_ok = (scale == 1) & (opaque_bg != 0) & ((ch_x0 & 1) == 0) & (!(ch_x0 < cx0)) & (!(ch_x0 + 8 > cx1)) & (!(gy0 < cy0)) & (!(gy0 + 16 > cy1));
+            if (fast_ok != 0) [
+                x_q = ch_x0 >> 1;
+                loop (r:16 = 0 .. 16) [
+                    row_byte = glyph_base@[r * 1];
+                    line_base = back_fb + ((gy0 + r) * stride);
+                    loop (pr:4 = 0 .. 4) [
+                        line_base@[(x_q + pr)] = pack_pixel_pair_qword(row_byte, pr, fg_col, bg_col);
+                    ]
+                ]
+            ]
+            if (fast_ok == 0) [
+                x_s = ch_x0; if (x_s < cx0) [ x_s = cx0; ]
+                x_e = ch_x0 + cell_w; if (x_e > cx1) [ x_e = cx1; ]
+                rh = y_end - y_start;
+                rw = x_e - x_s;
+                loop (dr:32 = 0 .. rh) [
+                    py = y_start + dr;
+                    gr = (py - gy0) >> (scale - 1);
+                    row_byte = glyph_base@[gr * 1];
+                    line_base = back_fb + (py * stride);
+                    loop (dc:16 = 0 .. rw) [
+                        px = x_s + dc;
+                        gc = (px - ch_x0) >> (scale - 1);
+                        bit = (row_byte >> (7 - gc)) & 1;
+                        if (bit != 0) [
+                            sagr_put_px_back!(line_base, px, fg_col);
+                        ]
+                        if ((bit == 0) & (opaque_bg != 0)) [
+                            sagr_put_px_back!(line_base, px, bg_col);
+                        ]
+                    ]
+                ]
+            ]
+        ]
+    ]
+
+    tile_mark_rect!(tile_mask, width, height, gx0, gy0, total_w, cell_h);
+    ret 0;
+]
+
+fn sagr_flush_one_tile!(front_fb, back_fb, width, height, stride, tx, ty) [
+    px = tx << 4;
+    py = ty << 4;
+    if ((!(px < width)) | (!(py < height))) [
+        ret 0;
+    ]
+    cw = width - px;
+    if (cw > 16) [ cw = 16; ]
+    ch = height - py;
+    if (ch > 16) [ ch = 16; ]
+    byte_x = px << 2;
+
+    if (cw == 16) [
+        loop (r:16 = 0 .. ch) [
+            off = ((py + r) * stride) + byte_x;
+            src_row = back_fb + off;
+            dst_row = front_fb + off;
+            loop (k:8 = 0 .. 8) [
+                dst_row@[k] = src_row@[k];
+            ]
+        ]
+        ret 0;
+    ]
+
+    qw_pairs = cw >> 1;
+    has_odd  = cw & 1;
+    b_off    = qw_pairs << 3;
+    loop (r:16 = 0 .. ch) [
+        off = ((py + r) * stride) + byte_x;
+        src_row = back_fb + off;
+        dst_row = front_fb + off;
+        loop (k:8 = 0 .. qw_pairs) [
+            dst_row@[k] = src_row@[k];
+        ]
+        if (has_odd != 0) [
+            loop (bi:4 = 0 .. 4) [
+                bo = b_off + bi;
+                bt = src_row@[bo * 1];
+                dst_row@[bo * 1] = bt;
+            ]
+        ]
+    ]
+    ret 0;
+]
+
+fn sagr_flush_dirty_tiles!(disp_ctrl, tile_mask) [
+    front_fb = disp_ctrl@[DISP_LENS_FRONT_FB];
+    back_fb  = disp_ctrl@[DISP_LENS_BACK_FB];
+    width    = disp_ctrl@[DISP_LENS_WIDTH];
+    height   = disp_ctrl@[DISP_LENS_HEIGHT];
+    stride   = disp_ctrl@[DISP_LENS_STRIDE];
+    if ((front_fb == 0) | (back_fb == 0) | (width < 1) | (height < 1)) [
+        ret 0;
+    ]
+
+    n_tiles_x = (width + 15) >> 4;
+    n_tiles_y = (height + 15) >> 4;
+    n_tiles   = n_tiles_x * n_tiles_y;
+    n_words   = (n_tiles + 63) >> 6;
+    if (n_words > SAGR_MAX_TILE_WORDS) [
+        n_words = SAGR_MAX_TILE_WORDS;
+    ]
+
+    flushed = 0;
+    loop (w:512 = 0 .. n_words) [
+        word = tile_mask@[w];
+        if (word != 0) [
+            tile_mask@[w] = 0;
+            loop (b:64 = 0 .. 64) [
+                if (word != 0) [
+                    tz = ctz64(word);
+                    word = word & (word - 1);
+                    tile_idx = (w << 6) | tz;
+                    if (tile_idx < n_tiles) [
+                        ty = tile_idx / n_tiles_x;
+                        tx = tile_idx - (ty * n_tiles_x);
+                        sagr_flush_one_tile!(front_fb, back_fb, width, height, stride, tx, ty);
+                        flushed = flushed + 1;
+                    ]
+                ]
+            ]
+        ]
+    ]
+    disp_ctrl@[DISP_LENS_DIRTY] = 0;
+    ret flushed;
+]
+
+fn sagr_drain_ring!(disp_ctrl, font_ptr, tile_mask, out_cmd) [
+    drained = 0;
+    done = 0;
+    loop (step:512 = 0 .. 512) [
+        if (done == 0) [
+            if (sagr_ring_pop!(disp_ctrl, out_cmd) < 0) [
+                done = 1;
+            ]
+            if (done == 0) [
+                op = sagr_cmd_op(out_cmd@[0]);
+                if (op == SAGR_CMD_RECT) [
+                    sagr_raster_rect!(disp_ctrl, tile_mask, out_cmd);
+                ]
+                if (op == SAGR_CMD_BLIT_SURFACE) [
+                    sagr_raster_blit!(disp_ctrl, tile_mask, out_cmd);
+                ]
+                if (op == SAGR_CMD_GLYPH_RUN) [
+                    sagr_raster_glyph_run!(disp_ctrl, font_ptr, tile_mask, out_cmd);
+                ]
+                if (op == SAGR_CMD_DAMAGE_RECT) [
+                    qw0 = out_cmd@[0];
+                    qw1 = out_cmd@[1];
+                    width = disp_ctrl@[DISP_LENS_WIDTH];
+                    height = disp_ctrl@[DISP_LENS_HEIGHT];
+                    tile_mark_rect!(tile_mask, width, height, sagr_sext16(sagr_cmd_x(qw0)), sagr_sext16(sagr_cmd_y(qw0)), sagr_cmd_w(qw1), sagr_cmd_h(qw1));
+                ]
+                if (op == SAGR_CMD_COMMIT) [
+                    sagr_flush_dirty_tiles!(disp_ctrl, tile_mask);
+                    disp_ctrl@[DISP_LENS_FRAME_SEQ] = out_cmd@[2];
+                ]
+                drained = drained + 1;
+            ]
+        ]
+    ]
+    ret drained;
+]

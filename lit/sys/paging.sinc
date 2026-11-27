@@ -1,6 +1,6 @@
 // ==========================================
 // lit/sys/paging.sinc
-// LIT Bare-Metal Ring 0 Paging & W^X Sealing (Strict Law 15)
+// LIT Bare-Metal Ring 0 Paging, W^X Sealing & PAT Write-Combining (Strict Law 15)
 // ==========================================
 
 fn paging_get_cr3_base!() [
@@ -8,11 +8,41 @@ fn paging_get_cr3_base!() [
     ret cr3 & 4503599627366400;
 ]
 
-fn paging_split_2mb!(cr3_base, va, pmm) [
+fn paging_pt_lookup(cr3_base, va) [
     pml4_idx = (va >> 39) & 511;
     pdpt_base = cr3_base@[pml4_idx] & 4503599627366400;
     pdpt_idx = (va >> 30) & 511;
     pd_base = pdpt_base@[pdpt_idx] & 4503599627366400;
+    pd_idx = (va >> 21) & 511;
+    ret pd_base@[pd_idx] & 4503599627366400;
+]
+
+fn paging_split_2mb!(cr3_base, va, pmm) [
+    pml4_idx = (va >> 39) & 511;
+    pdpt_base = cr3_base@[pml4_idx] & 4503599627366400;
+    pdpt_idx = (va >> 30) & 511;
+    pdpt_entry = pdpt_base@[pdpt_idx];
+
+    pd_base = pdpt_entry & 4503599627366400;
+
+    // If mapped as a 1 GB PDPT huge page (PS=1, bit 7), split it into 512 x 2 MB PDEs first
+    if ((pdpt_entry & 128) != 0) [
+        pd_page = pmm_alloc_page!(pmm);
+        if (pd_page == 0) [
+            ret -1;
+        ]
+        base_1gb = ((pdpt_entry >> 30) & 4194303) << 30;
+        attr_1gb = 135 | (pdpt_entry & 24);
+        loop (j:512 = 0 .. 512) [
+            pd_page@[j] = (base_1gb + (j << 21)) | attr_1gb;
+        ]
+        cpu_write_cr0_wp!(0);
+        pdpt_base@[pdpt_idx] = pd_page | 7;
+        cpu_write_cr0_wp!(1);
+        cpu_invlpg!(va);
+        pd_base = pd_page;
+    ]
+
     pd_idx = (va >> 21) & 511;
     pd_entry = pd_base@[pd_idx];
 
@@ -25,27 +55,24 @@ fn paging_split_2mb!(cr3_base, va, pmm) [
         ret -1;
     ]
 
-    base_2mb = pd_entry & 4503599625269248;
+    base_2mb = ((pd_entry >> 21) & 2147483647) << 21;
+    attr_2mb = 7 | (pd_entry & 24);
     loop (k:512 = 0 .. 512) [
-        pt_page@[k] = base_2mb + (k << 12) | 7;
+        pt_page@[k] = (base_2mb + (k << 12)) | attr_2mb;
     ]
 
     cpu_write_cr0_wp!(0);
     pd_base@[pd_idx] = pt_page | 7;
     cpu_write_cr0_wp!(1);
+    cpu_invlpg!(va);
     ret 1;
 ]
 
 fn paging_update_prot!(cr3_base, va, pages, is_seal) [
     cpu_write_cr0_wp!(0);
-    loop (p:64 = 0 .. pages) [
+    loop (p:256 = 0 .. pages) [
         cur_va = va + (p << 12);
-        pml4_idx = (cur_va >> 39) & 511;
-        pdpt_base = cr3_base@[pml4_idx] & 4503599627366400;
-        pdpt_idx = (cur_va >> 30) & 511;
-        pd_base = pdpt_base@[pdpt_idx] & 4503599627366400;
-        pd_idx = (cur_va >> 21) & 511;
-        pt_base = pd_base@[pd_idx] & 4503599627366400;
+        pt_base = paging_pt_lookup(cr3_base, cur_va);
         pt_idx = (cur_va >> 12) & 511;
         pte = pt_base@[pt_idx];
         if (is_seal != 0) [
@@ -54,6 +81,47 @@ fn paging_update_prot!(cr3_base, va, pages, is_seal) [
         if (is_seal == 0) [
             pt_base@[pt_idx] = pte | 2;
         ]
+        cpu_invlpg!(cur_va);
+    ]
+    cpu_write_cr0_wp!(1);
+    ret 0;
+]
+
+fn paging_set_wc!(cr3_base, fb_base, fb_bytes, pmm) [
+    if ((fb_base == 0) | (fb_bytes < 1)) [
+        ret 0;
+    ]
+    // Program IA32_PAT (MSR 0x277 = 631) Entry 4 (bits 39:32) = 0x01 (Write-Combining)
+    pat = cpu_rdmsr!(631);
+    pat = (pat & (-1 ^ (255 << 32))) | (1 << 32);
+    cpu_wrmsr!(631, pat);
+
+    start_va = fb_base & (-4096);
+    end_va   = (fb_base + fb_bytes + 4095) & (-4096);
+    pages    = (end_va - start_va) >> 12;
+    if (pages > 16384) [
+        pages = 16384;
+    ]
+
+    // Split every overlapping 2 MB PDE first (2 MB PDEs place PAT at bit 12 instead of bit 7)
+    first_2m = start_va & (-2097152);
+    n_2m = ((end_va - first_2m) + 2097151) >> 21;
+    if (n_2m > 64) [
+        n_2m = 64;
+    ]
+    loop (m:64 = 0 .. n_2m) [
+        if (paging_split_2mb!(cr3_base, first_2m + (m << 21), pmm) < 0) [
+            ret -1;
+        ]
+    ]
+
+    cpu_write_cr0_wp!(0);
+    loop (i:16384 = 0 .. pages) [
+        cur_va = start_va + (i << 12);
+        pt_base = paging_pt_lookup(cr3_base, cur_va);
+        pt_idx = (cur_va >> 12) & 511;
+        // Clear PWT(8) + PCD(16) = 24, set PAT(128) -> PAT4 = WC
+        pt_base@[pt_idx] = (pt_base@[pt_idx] & (-25)) | 128;
         cpu_invlpg!(cur_va);
     ]
     cpu_write_cr0_wp!(1);

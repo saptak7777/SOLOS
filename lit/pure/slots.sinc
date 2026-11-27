@@ -43,6 +43,11 @@ fn slot_find_free_high(table) [
     ret slot_find_free_dir(table, 63, -1, 32);
 ]
 
+// Persistent SAGR pane slots (3..31), leaving 0..2 for system & 63..32 for transient coreutils
+fn slot_find_free_pane(table) [
+    ret slot_find_free_dir(table, 3, 1, 29);
+]
+
 fn slot_find_by_hash(table, hash_val) [
     match_slot = -1;
     loop (h:64 = 0 .. 64) [

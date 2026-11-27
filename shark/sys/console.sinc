@@ -4,6 +4,9 @@
 // ==========================================
 
 fn console_flush_screen!(state_ptr) [
+    if (state_ptr@[CONSOLE_LENS_STREAM_BUF] != 0) [
+        ret 0;
+    ]
     fb_base = state_ptr@[CONSOLE_LENS_FB_BASE];
     if (fb_base != 0) [
         backbuffer = state_ptr@[CONSOLE_LENS_BACKBUFFER];
@@ -33,6 +36,11 @@ fn console_clear_backbuffer!(state_ptr) [
 ]
 
 fn console_clear!(state_ptr) [
+    sbuf = state_ptr@[CONSOLE_LENS_STREAM_BUF];
+    if (sbuf != 0) [
+        sbuf@[0] = 0;
+        ret 0;
+    ]
     console_clear_backbuffer!(state_ptr);
     console_flush_screen!(state_ptr);
     ret 0;
@@ -45,6 +53,7 @@ fn console_init!(state_ptr) [
     state_ptr@[CONSOLE_LENS_MAX_ROWS] = height >> 4;
     state_ptr@[CONSOLE_LENS_FG] = COLOR_FG_WHITE;
     state_ptr@[CONSOLE_LENS_BG] = COLOR_BG;
+    state_ptr@[CONSOLE_LENS_STREAM_BUF] = 0;
     console_clear_backbuffer!(state_ptr);
     ret 0;
 ]
@@ -56,6 +65,9 @@ fn console_set_color!(state_ptr, fg, bg) [
 ]
 
 fn console_newline!(state_ptr) [
+    if (state_ptr@[CONSOLE_LENS_STREAM_BUF] != 0) [
+        ret console_putc!(state_ptr, 241);
+    ]
     state_ptr@[CONSOLE_LENS_COL] = 0;
     row = state_ptr@[CONSOLE_LENS_ROW] + 1;
     max_rows = state_ptr@[CONSOLE_LENS_MAX_ROWS];
@@ -66,6 +78,17 @@ fn console_newline!(state_ptr) [
 ]
 
 fn console_putc!(state_ptr, trg_slot) [
+    sbuf = state_ptr@[CONSOLE_LENS_STREAM_BUF];
+    if (sbuf != 0) [
+        pos = sbuf@[0];
+        cap = sbuf@[1];
+        dst = sbuf@[2];
+        if ((dst != 0) & (pos < cap)) [
+            dst@[pos * 1] = trg_slot;
+            sbuf@[0] = pos + 1;
+        ]
+        ret 0;
+    ]
     if (trg_slot == 241) [
         console_newline!(state_ptr);
         ret 0;
